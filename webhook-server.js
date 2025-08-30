@@ -390,9 +390,27 @@ app.get('/v1/me', requireAuth, (req, res) => {
 });
 
 // GET /v1/credits
-app.get('/v1/credits', requireAuth, (req, res) => {
-    const user = usersByEmail.get(req.email) || { balance: 0 };
-    res.json({ balance: user.balance, cycle: { end: user.cycleEnd } });
+app.get('/v1/credits', requireAuth, async (req, res) => {
+    try {
+        let user = usersByEmail.get(req.email) || { balance: 0 };
+        
+        // If Postgres is available, get fresh data
+        if (pgPool) {
+            const result = await pgPool.query('SELECT balance, cycle_end FROM users WHERE email = $1', [req.email]);
+            if (result.rows.length > 0) {
+                const dbUser = result.rows[0];
+                user = { balance: dbUser.balance || 0, cycleEnd: dbUser.cycle_end };
+                // Update memory cache
+                usersByEmail.set(req.email, { ...usersByEmail.get(req.email), ...user });
+            }
+        }
+        
+        res.json({ balance: user.balance, cycle: { end: user.cycleEnd } });
+    } catch (error) {
+        console.error('Credits error:', error);
+        const user = usersByEmail.get(req.email) || { balance: 0 };
+        res.json({ balance: user.balance, cycle: { end: user.cycleEnd } });
+    }
 });
 
 // POST /v1/jobs { requestedSeconds }

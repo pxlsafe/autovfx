@@ -275,7 +275,16 @@ class AutoVFX {
         const upgradeModalBtn = document.getElementById('upgradeModalBtn');
         if (upgradeModalBtn) {
             upgradeModalBtn.addEventListener('click', () => {
-                this.handleUpgrade();
+                this.hideInsufficientCreditsModal();
+                this.openExternalUrl('https://pxlsafe.com/products/autovfx');
+            });
+        }
+
+        const manageSubBtn = document.getElementById('manageSubBtn');
+        if (manageSubBtn) {
+            manageSubBtn.addEventListener('click', () => {
+                this.hideInsufficientCreditsModal();
+                this.openExternalUrl('https://pxlsafe.com/apps/subscriptions');
             });
         }
 
