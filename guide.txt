@@ -1,0 +1,16 @@
+AutoVFX — Install & Use (Super Quick)
+
+Install (Regular ZXP)
+1) Download autovfx-signed.zxp
+2) Install and open ZXP Installer
+3) Drag autovfx-signed.zxp into ZXP Installer → Install
+4) Restart Premiere Pro → Window > Extensions > AutoVFX
+
+Use
+1) Select a clip (or set In/Out)
+2) Click Export
+3) Enter your prompt
+4) Click the Magic Wand to enhance it
+5) Click Generate → wait → Import if needed
+
+Done. Fast, simple, powerful.

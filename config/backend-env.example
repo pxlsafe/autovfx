@@ -1,0 +1,109 @@
+# ===== BACKEND LICENSING CONFIGURATION =====
+
+# Backend API Configuration
+BACKEND_BASE_URL=https://your-backend-api.com/v1
+CORS_ORIGINS=https://localhost:3000,https://your-frontend.com
+
+# Database Configuration  
+DATABASE_URL=postgresql://user:password@localhost:5432/autovfx_licensing
+REDIS_URL=redis://localhost:6379
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-here
+JWT_EXPIRES_IN=7d
+
+# ===== APSTLE SUBSCRIPTIONS CONFIGURATION =====
+
+# Apstle API Configuration
+APSTLE_API_BASE=https://subscription-admin.appstle.com/api/external/v2
+APSTLE_API_KEY=V8v5lUCT7EdIdgb5h93QJJXYgHwdXS1H
+
+# Shopify Webhook Configuration
+SHOPIFY_WEBHOOK_SECRET=your-shopify-webhook-secret
+
+# Shopify Store Configuration
+SHOPIFY_STORE_URL=6134fe-1d.myshopify.com
+# Top-up Product SKUs (Shopify)
+TOPUP_SKU_1000=shopify-sku-for-1000-credits
+TOPUP_SKU_2000=shopify-sku-for-2000-credits
+
+# Selling Plan IDs (Apstle Subscription Tiers)
+SELLING_PLAN_TIER1=690384601430
+SELLING_PLAN_TIER2=690385518934
+SELLING_PLAN_TIER3=690385551702
+
+# Apstle Subscription Group ID
+APSTLE_SUBSCRIPTION_GROUP_ID=your-subscription-group-id
+
+# ===== RUNWAY API CONFIGURATION =====
+
+# Runway API (for backend calls)
+RUNWAY_API_KEY=your-runway-api-key
+RUNWAY_BASE_URL=https://api.dev.runwayml.com/v1
+RUNWAY_ORG_ID=your-runway-org-id
+
+# ===== CREDIT SYSTEM CONFIGURATION =====
+
+# Credit Math (frontend and backend must match)
+# Runway pricing: 15 credits per 1 second of video
+CREDITS_PER_SECOND=15
+SECONDS_PER_CREDIT=
+
+# Tier Credits (monthly)
+TIER1_CREDITS=1000
+TIER2_CREDITS=2500
+TIER3_CREDITS=8000
+
+# Top-up Credits
+TOPUP_1000_CREDITS=1000
+TOPUP_2000_CREDITS=2000
+
+# ===== EMAIL CONFIGURATION =====
+
+# For magic link authentication
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+FROM_EMAIL=noreply@your-domain.com
+
+# ===== SECURITY CONFIGURATION =====
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Webhook Security
+WEBHOOK_TIMEOUT_MS=30000
+WEBHOOK_RETRY_ATTEMPTS=3
+
+# ===== FRONTEND CONFIGURATION =====
+
+# Frontend URLs (for CORS and redirects)
+FRONTEND_URL=https://your-frontend.com
+CEP_EXTENSION_URL=file://localhost
+
+# Success/Cancel URLs for Shopify Checkout
+CHECKOUT_SUCCESS_URL=https://your-frontend.com/checkout/success
+CHECKOUT_CANCEL_URL=https://your-frontend.com/checkout/cancel
+
+# ===== MONITORING & LOGGING =====
+
+# Logging
+LOG_LEVEL=info
+LOG_FORMAT=json
+
+# Optional: Monitoring services
+SENTRY_DSN=your-sentry-dsn
+DATADOG_API_KEY=your-datadog-api-key
+
+# ===== DEVELOPMENT SETTINGS =====
+
+# Development mode
+NODE_ENV=production
+PORT=3000
+
+# Development overrides
+DEV_DISABLE_AUTH=false
+DEV_MOCK_PAYMENTS=false
+DEV_FREE_CREDITS=false 

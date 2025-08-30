@@ -1,0 +1,47 @@
+{
+  "name": "autovfx-premiere-extension",
+  "version": "1.0.0",
+  "description": "AI-powered video generation extension for Adobe Premiere Pro",
+  "main": "index.html",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "echo \"Build complete\"",
+    "dev": "echo \"Development mode\"",
+    "package": "zip -r autovfx-extension.zip . -x node_modules/\\* .git/\\* *.log",
+    "start:backend": "cd backend && npm start",
+    "dev:backend": "cd backend && npm run dev",
+    "backend": "RUN_LOCAL=true node webhook-server.js",
+    "start": "RUN_LOCAL=true node webhook-server.js",
+    "vercel-build": "echo Using serverless export",
+    "vercel-dev": "RUN_LOCAL=true node webhook-server.js"
+  },
+  "keywords": [
+    "adobe",
+    "premiere-pro",
+    "cep",
+    "extension",
+    "ai",
+    "video-generation",
+    "runway-ml"
+  ],
+  "author": "AutoVFX Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/autovfx-premiere-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/autovfx-premiere-extension/issues"
+  },
+  "homepage": "https://github.com/yourusername/autovfx-premiere-extension#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "express": "^5.1.0"
+  },
+  "directories": {
+    "doc": "docs"
+  }
+}

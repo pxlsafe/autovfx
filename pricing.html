@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AutoVFX — Pricing</title>
+  <style>
+    body{margin:0;padding:0;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+    .pricing-hero{max-width:1200px;margin:0 auto;padding:48px 18px 10px;text-align:center;}
+    .pricing-hero h1{
+      margin:0 0 10px;font-size:2.6rem;font-weight:800;
+      background:linear-gradient(135deg,#3C97C7,#5DADE2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    }
+    .pricing-hero p{margin:0 auto 24px;max-width:680px;color:#BACACE;font-size:1rem;line-height:1.6;}
+
+    /* Pricing grid */
+    #autovfx-pricing{max-width:1200px;margin:0 auto;padding:10px 18px 42px;}
+    #autovfx-pricing .grid{display:grid;gap:16px;grid-template-columns:repeat(3,minmax(0,1fr));}
+    #autovfx-pricing .card{
+      background:rgba(60,151,199,0.08);
+      border:1px solid rgba(60,151,199,0.28);
+      border-radius:14px;padding:22px;color:#cfe7ef;
+    }
+    #autovfx-pricing h3{margin:0 0 6px;font-size:20px;color:#e2f3f7;}
+    #autovfx-pricing .badge{font-size:11px;color:#06131a;background:#3C97C7;border-radius:999px;padding:4px 8px;margin-left:8px;font-weight:700;}
+    #autovfx-pricing .price{font-size:34px;font-weight:800;color:#e2f3f7;margin:8px 0 2px;}
+    #autovfx-pricing .per{font-size:12px;color:#97ADB5;margin-left:6px;}
+    #autovfx-pricing ul{list-style:none;margin:14px 0 0;padding:0;color:#BACACE;font-size:14px;line-height:1.6;}
+    #autovfx-pricing li{margin:6px 0;}
+    #autovfx-pricing .buy{
+      display:inline-flex;align-items:center;justify-content:center;gap:.5rem;margin-top:18px;padding:.55rem 1.2rem;
+      font-size:14px;font-weight:600;text-decoration:none;color:#06131a;background:#3C97C7;border:0;border-radius:10px;cursor:pointer;
+      box-shadow:0 6px 18px rgba(60,151,199,0.45), inset 0 -4px 10px rgba(255,255,255,0.12);
+      transition:transform .08s ease, box-shadow .2s ease, background-color .2s ease;
+    }
+    #autovfx-pricing .buy:hover{background:#3181A9;box-shadow:0 10px 22px rgba(60,151,199,0.6), inset 0 -4px 12px rgba(255,255,255,0.18);}
+    #autovfx-pricing .buy:active{transform:translateY(1px);}
+    /* Featured */
+    #autovfx-pricing .featured{background:rgba(60,151,199,0.12);border-color:rgba(60,151,199,0.55);transform:scale(1.01);}
+    /* Responsive */
+    @media (max-width:900px){#autovfx-pricing .grid{grid-template-columns:1fr;}.pricing-hero h1{font-size:2rem;}}
+  </style>
+</head>
+<body>
+
+  <!-- Pricing intro (simple and relevant to pricing) -->
+  <section class="pricing-hero">
+    <h1>Choose your plan</h1>
+    <p>AutoVFX for Premiere Pro and After Effects. One workflow. Clear pricing. Cancel anytime.</p>
+  </section>
+
+  <!-- PRICING: AutoVFX + Lemon Squeezy overlay -->
+  <section id="autovfx-pricing">
+    <div class="grid">
+      <!-- Plan 1 -->
+      <div class="card">
+        <h3>Creator</h3>
+        <div>
+          <span class="price" id="price-1">$49</span><span class="per" id="per-1"> / month</span>
+        </div>
+        <ul>
+          <li>300 credits (30 videos)</li>
+          <li>Premiere Pro & After Effects plugin</li>
+          <li>Latest AI video generation</li>
+          <li>AI prompt enhancement</li>
+          <li>Email support</li>
+        </ul>
+        <button class="buy" onclick="startCheckout('690384601430')">Get Creator</button>
+      </div>
+
+      <!-- Plan 2 (featured) -->
+      <div class="card featured">
+        <h3>Studio <span class="badge">Most popular</span></h3>
+        <div>
+          <span class="price" id="price-2">$79</span><span class="per" id="per-2"> / month</span>
+        </div>
+        <ul>
+          <li>600 credits (60 videos)</li>
+          <li>Premiere Pro & After Effects plugin</li>
+          <li>Latest AI video generation</li>
+          <li>AI prompt enhancement</li>
+          <li>Priority support</li>
+        </ul>
+        <button class="buy" onclick="startCheckout('690385518934')">Get Studio</button>
+      </div>
+
+      <!-- Plan 3 -->
+      <div class="card">
+        <h3>Pro</h3>
+        <div>
+          <span class="price" id="price-3">$199</span><span class="per" id="per-3"> / month</span>
+        </div>
+        <ul>
+          <li>2,000 credits (200 videos)</li>
+          <li>Premiere Pro & After Effects plugin</li>
+          <li>Latest AI video generation</li>
+          <li>AI prompt enhancement</li>
+          <li>Dedicated support</li>
+        </ul>
+        <button class="buy" onclick="startCheckout('690385551702')">Get Pro</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shopify checkout integration -->
+  <!-- Note: Shopify checkout will be handled via direct links or Shopify Buy SDK -->
+
+  <script>
+    // ----- Configure this -----
+    const BACKEND_ORIGIN = 'https://your-autovfx-backend.com'; // set your backend API URL
+    const SHOPIFY_STORE = 'your-store.myshopify.com';
+    const SELLING_PLANS = [
+      { id: '690384601430', priceEl:'price-1', perEl:'per-1' }, // Creator
+      { id: '690385518934', priceEl:'price-2', perEl:'per-2' }, // Studio  
+      { id: '690385551702', priceEl:'price-3', perEl:'per-3' }  // Pro
+    ];
+
+    // Create Apstle subscription checkout via backend, then redirect to Shopify
+    async function startCheckout(sellingPlanId) {
+      try {
+        const res = await fetch(`${BACKEND_ORIGIN}/api/v1/checkout/subscription`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sellingPlanId })
+        });
+        if (!res.ok) throw new Error('Checkout failed');
+        const data = await res.json();
+        const url = data?.checkoutUrl || data?.url;
+        if (!url) throw new Error('No checkout URL');
+        
+        // Open Shopify checkout in new tab
+        window.open(url, '_blank');
+      } catch (e) {
+        console.error(e);
+        alert('Error starting checkout. Please try again.');
+      }
+    }
+
+    // Optional: load live prices from your backend (keeps UI in sync if you change them in Shopify)
+    (async function loadPrices() {
+      try {
+        const ids = SELLING_PLANS.map(v => v.id).join(',');
+        const res = await fetch(`${BACKEND_ORIGIN}/api/v1/selling-plans?ids=${encodeURIComponent(ids)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const map = new Map((data.sellingPlans || []).map(v => [String(v.id), v]));
+        SELLING_PLANS.forEach(v => {
+          const info = map.get(String(v.id));
+          if (!info) return;
+          const price = (info.price ?? 0) / 100;
+          document.getElementById(v.priceEl).textContent =
+            new Intl.NumberFormat(undefined, { style:'currency', currency: info.currency || 'USD' }).format(price);
+          document.getElementById(v.perEl).textContent =
+            info.is_subscription ? ` / ${info.interval_count > 1 ? info.interval_count+' ' : ''}${info.interval}` : '';
+        });
+      } catch(_) {}
+    })();
+  </script>
+</body>
+</html>
+
+
