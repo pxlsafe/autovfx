@@ -10,7 +10,7 @@
   "licensing": {
     "enabled": true,
     "backend": {
-      "baseUrl": "http://localhost:3000/v1",
+      "baseUrl": "https://autovfx.vercel.app/v1",
       "endpoints": {
         "auth": "/auth",
         "me": "/me",
@@ -30,7 +30,7 @@
         "tier3": "690385551702"
       },
       "shopify": {
-        "storeUrl": "your-store.myshopify.com",
+        "storeUrl": "pxlsafe.com",
         "webhookSecret": "",
         "topupProducts": {
           "credits_1000": "shopify-product-id-1000",

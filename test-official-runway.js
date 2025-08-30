@@ -1,5 +1,5 @@
 
-const API_KEY = 'key_a33ec5121fccdca78789ef930fb9483c43656f2cd525b4199cd763e7f6456214a1530801bed32dff7a5c08e9147d06945abaf9136c40696cb6089dfa0ea9624a';
+const API_KEY = '';
 
 async function testOfficialRunwayAPI() {
     console.log('🧪 Testing Official Runway API patterns...');

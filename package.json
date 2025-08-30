@@ -39,7 +39,9 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.10",
-    "express": "^5.1.0"
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "pg": "^8.11.5"
   },
   "directories": {
     "doc": "docs"
