@@ -128,15 +128,26 @@ app.use((req, res, next) => {
     next();
 });
 
-// Strict CORS (allowlist via env CORS_ORIGINS). CEP may have no Origin header.
-const allowOrigins = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+// CORS: allow all by default (CEP panels often use file:// or null origins). If CORS_ORIGINS is set, enforce allowlist.
+const rawCors = (process.env.CORS_ORIGINS || '').trim();
+const allowAllCors = rawCors === '' || rawCors === '*';
+const allowOrigins = allowAllCors ? [] : rawCors.split(',').map(s => s.trim()).filter(Boolean);
 app.use((req, res, next) => {
     const origin = req.headers.origin;
+    if (allowAllCors) {
+        // Reflect the origin if present to keep credentials flexible; otherwise use *.
+        res.header('Access-Control-Allow-Origin', origin || '*');
+        res.header('Vary', 'Origin');
+        res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        if (req.method === 'OPTIONS') return res.sendStatus(200);
+        return next();
+    }
+    // Strict allowlist path
     if (!origin) return next(); // file:// or native CEP
-    if (allowOrigins.length === 0 || allowOrigins.includes(origin)) {
+    if (allowOrigins.includes(origin) || origin === 'null') {
         res.header('Access-Control-Allow-Origin', origin);
         res.header('Vary', 'Origin');
-        res.header('Access-Control-Allow-Credentials', 'true');
         res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -505,3 +516,5 @@ process.on('SIGTERM', () => {
     console.log('\n👋 Shutting down webhook server...');
     process.exit(0);
 });
+
+
