@@ -128,32 +128,15 @@ app.use((req, res, next) => {
     next();
 });
 
-// CORS: allow all by default (CEP panels often use file:// or null origins). If CORS_ORIGINS is set, enforce allowlist.
-const rawCors = (process.env.CORS_ORIGINS || '').trim();
-const allowAllCors = rawCors === '' || rawCors === '*';
-const allowOrigins = allowAllCors ? [] : rawCors.split(',').map(s => s.trim()).filter(Boolean);
+// CORS: allow all origins for CEP compatibility (panels use file:// or no origin)
 app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (allowAllCors) {
-        // Reflect the origin if present to keep credentials flexible; otherwise use *.
-        res.header('Access-Control-Allow-Origin', origin || '*');
-        res.header('Vary', 'Origin');
-        res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        if (req.method === 'OPTIONS') return res.sendStatus(200);
-        return next();
-    }
-    // Strict allowlist path
-    if (!origin) return next(); // file:// or native CEP
-    if (allowOrigins.includes(origin) || origin === 'null') {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Vary', 'Origin');
-        res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        if (req.method === 'OPTIONS') return res.sendStatus(200);
-        return next();
-    }
-    return res.status(403).json({ error: 'Origin not allowed' });
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, ngrok-skip-browser-warning');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    next();
 });
 
 // Test endpoint
