@@ -836,11 +836,8 @@ class AutoVFX {
         const enhanceBtn = document.getElementById('enhanceBtn');
         const currentPrompt = promptInput.value.trim();
 
-        // Check if OpenAI API is configured
-        if (!this.openaiAPI || !this.openaiConfig.apiKey) {
-            this.showError('OpenAI API key not configured. Use setOpenAIApiKey() in console to configure.');
-            return;
-        }
+        // If no client OpenAI key, fallback to server-side enhancement endpoint
+        const useServerEnhance = !this.openaiAPI || !this.openaiConfig.apiKey;
 
         // Check if there's a prompt to enhance
         if (!currentPrompt) {
@@ -853,10 +850,33 @@ class AutoVFX {
             enhanceBtn.disabled = true;
             enhanceBtn.classList.add('loading');
 
-            console.log('🎨 Enhancing prompt:', currentPrompt);
+            console.log('🎨 Enhancing prompt:', currentPrompt, useServerEnhance ? '(server)' : '(client)');
 
-            // Call OpenAI API to enhance the prompt
-            const result = await this.openaiAPI.enhancePrompt(currentPrompt);
+            let result;
+            if (useServerEnhance) {
+                // Use backend endpoint with server key
+                try {
+                    const resp = await fetch(`${this.licenseAPI.baseUrl}${this.licenseAPI.endpoints.enhance || '/enhance'}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ prompt: currentPrompt })
+                    });
+                    if (!resp.ok) {
+                        const txt = await resp.text().catch(()=> '');
+                        throw new Error(`Server enhance failed: ${resp.status} ${txt}`);
+                    }
+                    const data = await resp.json();
+                    result = { success: true, original: currentPrompt, enhanced: data.enhanced };
+                } catch (err) {
+                    console.error('❌ Server-side enhance error:', err);
+                    throw err;
+                }
+            } else {
+                // Call OpenAI API to enhance the prompt (client key)
+                result = await this.openaiAPI.enhancePrompt(currentPrompt);
+            }
 
             if (result.success) {
                 // Update the prompt input with enhanced version

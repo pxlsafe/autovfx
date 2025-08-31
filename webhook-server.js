@@ -413,6 +413,59 @@ app.get('/v1/credits', requireAuth, async (req, res) => {
     }
 });
 
+// POST /v1/enhance { prompt }
+// Uses server-side OpenAI API key so end-users don't need to configure a client key
+app.post('/v1/enhance', async (req, res) => {
+    try {
+        const prompt = String(req.body?.prompt || '').trim();
+        if (!prompt) return res.status(400).json({ error: 'Prompt required' });
+
+        const apiKey = process.env.OPENAI_API_KEY || '';
+        if (!apiKey) {
+            return res.status(501).json({ error: 'Server is not configured with OPENAI_API_KEY' });
+        }
+
+        const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+        const model = process.env.OPENAI_MODEL || 'gpt-4o';
+
+        const systemPrompt = `You are a professional video editing prompt enhancer specializing in Runway ML's Gen-4 Aleph model. Enhance user prompts following these rules:
+1) Start with an action verb (add, remove, change, replace, re-light, re-style)
+2) Be specific about the transformation
+3) ALWAYS include explicit preservation instructions for existing scene elements
+4) Keep prompts concise (20–35 words)
+MANDATORY: Explicitly state that all other elements remain unchanged/preserved.`;
+
+        const response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Enhance this prompt for Runway ML video generation: "${prompt}"` }
+                ],
+                max_completion_tokens: 300
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            return res.status(500).json({ error: `OpenAI error: ${response.status}`, detail: err.error?.message || null });
+        }
+        const data = await response.json();
+        const enhanced = (data.choices?.[0]?.message?.content || '').trim().replace(/^(["'])(.*)\1$/,'$2');
+        if (!enhanced) return res.status(500).json({ error: 'Empty response from OpenAI' });
+
+        return res.json({ success: true, original: prompt, enhanced });
+    } catch (e) {
+        console.error('Enhance error:', e);
+        return res.status(500).json({ error: 'Enhance failed', detail: String(e) });
+    }
+});
+
 // POST /v1/jobs { requestedSeconds }
 app.post('/v1/jobs', requireAuth, (req, res) => {
     const requestedSeconds = Math.max(0, Number(req.body?.requestedSeconds || 0));

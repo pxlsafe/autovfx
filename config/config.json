@@ -18,7 +18,8 @@
         "jobs": "/jobs",
         "webhooks": "/webhooks/shopify",
         "portal": "/portal-link",
-        "checkout": "/checkout/topup"
+        "checkout": "/checkout/topup",
+        "enhance": "/enhance"
       }
     },
     "apstle": {
