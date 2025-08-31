@@ -471,6 +471,8 @@ class AutoVFX {
                 if (this.licenseAPI.isAuthenticated()) {
                     try {
                         await this.licenseAPI.getMe();
+                        // Ensure freshest balance from backend (reads Postgres when available)
+                        await this.licenseAPI.getCredits();
                         this.showAuthenticatedState();
                     } catch (error) {
                         console.warn('⚠️  Stored auth invalid, requiring re-authentication');
@@ -2885,6 +2887,8 @@ class AutoVFX {
 
             await this.licenseAPI.authenticate(credentials);
             await this.licenseAPI.getMe();
+            // Refresh credits from backend to reflect DB value immediately
+            await this.licenseAPI.getCredits();
 
             this.showAuthSuccess('Successfully signed in!');
             setTimeout(() => {

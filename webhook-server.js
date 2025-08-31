@@ -384,9 +384,37 @@ function requireAuth(req, res, next) {
 }
 
 // GET /v1/me
-app.get('/v1/me', requireAuth, (req, res) => {
-    const user = usersByEmail.get(req.email) || { balance: 0 };
-    res.json({ user: { email: req.email }, balance: user.balance, subscription: { status: 'active', selling_plan_id: user.planId }, cycle: { end: user.cycleEnd } });
+app.get('/v1/me', requireAuth, async (req, res) => {
+    try {
+        let user = usersByEmail.get(req.email) || { balance: 0 };
+
+        // If Postgres is available, prefer fresh data from DB
+        if (pgPool) {
+            const result = await pgPool.query('SELECT balance, plan_id, plan_name, cycle_end FROM users WHERE email = $1', [req.email]);
+            if (result.rows.length > 0) {
+                const dbUser = result.rows[0];
+                user = {
+                    balance: dbUser.balance || 0,
+                    planId: dbUser.plan_id || user.planId || 'none',
+                    planName: dbUser.plan_name || user.planName || 'none',
+                    cycleEnd: dbUser.cycle_end || user.cycleEnd || null
+                };
+                // Update memory cache to keep things consistent
+                usersByEmail.set(req.email, { ...(usersByEmail.get(req.email) || {}), ...user });
+            }
+        }
+
+        res.json({ 
+            user: { email: req.email }, 
+            balance: user.balance, 
+            subscription: { status: (user.planId && user.planId !== 'none') ? 'active' : 'none', selling_plan_id: user.planId }, 
+            cycle: { end: user.cycleEnd } 
+        });
+    } catch (error) {
+        console.error('GET /v1/me error:', error);
+        const user = usersByEmail.get(req.email) || { balance: 0 };
+        res.json({ user: { email: req.email }, balance: user.balance, subscription: { status: 'active', selling_plan_id: user.planId }, cycle: { end: user.cycleEnd } });
+    }
 });
 
 // GET /v1/credits
