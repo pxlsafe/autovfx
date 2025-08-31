@@ -58,8 +58,8 @@ class AutoVFX {
         
         this.csInterface.evalScript("testJson()", (res) => {
             if (res.toLowerCase().indexOf("error") >1 || !res ) {
-                console.warn('⚠️ JSX returned with error');
-                this.showError('⚠️ JSX returned with error');
+                console.warn('⚠️ JSX returned with error - continuing anyway');
+                // Don't show error to user, just log it
             } else { let jp = JSON.parse(res); if(jp.jsontest && jp.jsontest == "succeed" ) 
                 console.log('✅ JSX and JsxJson loaded');
             }
