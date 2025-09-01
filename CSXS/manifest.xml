@@ -21,7 +21,7 @@
             <DispatchInfo>
                 <Resources>
                     <MainPath>./index.html</MainPath>
-                    <ScriptPath>./jsx/autovfx.jsx</ScriptPath>
+                    <ScriptPath>./jsx/autovfx.jsxbin</ScriptPath>
                     <CEFCommandLine>
                         <Parameter>--v=0</Parameter>
                         <Parameter>--mixed-context</Parameter>
