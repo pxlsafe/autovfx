@@ -4,21 +4,22 @@
  */
 
 class RunwayAPI {
-	constructor(config = {}) {
-		this.apiKey = config.apiKey || ''
-		this.baseUrl = config.baseUrl || 'https://api.dev.runwayml.com/v1'
-		this.model = config.defaultModel || config.model || 'gen4_aleph'
-		this.apiVersion = config.apiVersion || '2024-11-06'
-		this.defaultDuration = config.defaultDuration || 2
-		this.defaultRatio = config.defaultRatio || '1280:720'
-		this.watermark = config.watermark || false
+	constructor() {
+		this.apiKey =
+			'key_a33ec5121fccdca78789ef930fb9483c43656f2cd525b4199cd763e7f6456214a1530801bed32dff7a5c08e9147d06945abaf9136c40696cb6089dfa0ea9624a'
+		this.baseUrl = 'https://api.dev.runwayml.com/v1'
+		this.model = 'gen4_aleph'
+		this.apiVersion = '2024-11-06'
+		this.defaultDuration = 2
+		this.defaultRatio = '1280:720'
+		this.watermark = false
 
 		// Request throttling to prevent 400 errors from concurrent requests
 		this.activeRequests = new Set()
-		this.maxConcurrentRequests = config.maxConcurrentRequests || 3
+		this.maxConcurrentRequests = 3
 		this.requestQueue = []
 		this.lastRequestTime = 0
-		this.minRequestInterval = config.minRequestInterval || 1000 // 1 second between requests
+		this.minRequestInterval = 1000 // 1 second between requests
 
 		console.log('🚀 RunwayAPI initialized:', {
 			baseUrl: this.baseUrl,
@@ -28,13 +29,6 @@ class RunwayAPI {
 			maxConcurrentRequests: this.maxConcurrentRequests,
 			minRequestInterval: this.minRequestInterval,
 		})
-	}
-
-	/**
-	 * Set API key
-	 */
-	setApiKey(apiKey) {
-		this.apiKey = apiKey
 	}
 
 	/**

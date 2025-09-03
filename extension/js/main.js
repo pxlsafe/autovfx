@@ -1,77 +1,32 @@
+// @ts-check
+
 /**
  * AutoVFX Main Application
  * Handles UI interactions, Premiere Pro integration, and Runway API
  */
 
-const { resolve } = require('path')
-
 class AutoVFX {
 	constructor() {
 		this.csInterface = new CSInterface()
-		this.currentExportedVideo = null
-		this.generatedVideo = null
-		this.runwayConfig = {
-			apiKey: 'key_a33ec5121fccdca78789ef930fb9483c43656f2cd525b4199cd763e7f6456214a1530801bed32dff7a5c08e9147d06945abaf9136c40696cb6089dfa0ea9624a', // Your API key
-			baseUrl: 'https://api.dev.runwayml.com/v1', // Official Runway API
-			defaultModel: 'gen4_aleph', // Aleph model
-			apiVersion: '2024-11-06',
-		}
-
+		this.licenseAPI = new LicenseAPI()
+		this.runway = new RunwayAPI()
 		this.userConfig = { exptofold: 'Desktop', clearExp: false }
 
-		// Initialize Runway API
-		this.runwayAPI = null
-
-		// Initialize OpenAI API for prompt enhancement
-		this.openaiConfig = {
-			apiKey: null, // Will be loaded from config or set by user
-			baseUrl: 'https://api.openai.com/v1',
-			model: 'gpt-5',
-			maxTokens: 300,
-		}
-		this.openaiAPI = null
-
-		// Initialize FFmpeg Manager
-		// FFmpeg manager removed - using Premiere Pro native export
-
-		// Initialize video version management
-		this.selectedVideoSource = 'original' // Selected version ID (default to original)
-		this.videoVersions = new Map() // Store multiple video versions
-		this.currentVersionIndex = 0 // Current version in slider
-
-		// Progress animation
+		this.currentExportedVideo = null
+		this.generatedVideo = null
+		this.selectedVideoSource = 'original'
+		this.videoVersions = new Map()
+		this.currentVersionIndex = 0
 		this.progressAnimationInterval = null
-
-		// Reference image for consistency
 		this.referenceImage = null
-
-		// Initialize licensing
-		this.licenseAPI = null
-		this.licensingEnabled = false
-		this.currentReservation = null // Track current job reservation
+		this.currentReservation = null
 
 		this.init()
 	}
 
 	init() {
 		this.setupEventListeners()
-
-		this.csInterface.evalScript('testJson()', (res) => {
-			if (res.toLowerCase().indexOf('error') > 1 || !res) {
-				console.warn('⚠️ JSX returned with error - continuing anyway')
-				// Don't show error to user, just log it
-			} else {
-				let jp = JSON.parse(res)
-				if (jp.jsontest && jp.jsontest == 'succeed')
-					console.log('✅ JSX and JsxJson loaded')
-			}
-		})
-
 		this.loadConfiguration()
-		this.setupDebugFunctions()
-
-		// Initialize with export view
-		this.showView('exportView')
 
 		// Disable context menu globally, except on textareas (e.g., prompt input)
 		document.addEventListener('contextmenu', (e) => {
@@ -247,22 +202,6 @@ class AutoVFX {
 			})
 		}
 
-		// Magic link button
-		const magicLinkBtn = document.getElementById('magicLinkBtn')
-		if (magicLinkBtn) {
-			magicLinkBtn.addEventListener('click', () => {
-				this.handleMagicLink()
-			})
-		}
-
-		// Sign up button
-		const signUpBtn = document.getElementById('signUpBtn')
-		if (signUpBtn) {
-			signUpBtn.addEventListener('click', () => {
-				this.handleSignUp()
-			})
-		}
-
 		// Enter key handling for auth form
 		const authInputs = document.querySelectorAll('.auth-input')
 		authInputs.forEach((input) => {
@@ -376,39 +315,6 @@ class AutoVFX {
 	}
 
 	async loadConfiguration() {
-		// Load API key and other configurations
-		// In production, this would be loaded from secure storage
-		const storedConfig = localStorage.getItem('autovfx-config')
-		if (storedConfig) {
-			const config = JSON.parse(storedConfig)
-			// Only merge apiKey from stored config, ignore baseUrl to prevent using wrong endpoint
-			this.runwayConfig = {
-				...this.runwayConfig,
-				apiKey: config.apiKey || this.runwayConfig.apiKey,
-				// Explicitly ignore baseUrl from cache to prevent wrong endpoint
-			}
-		}
-
-		// FORCE the correct Runway API URL (override any cached values)
-		this.runwayConfig.baseUrl = 'https://api.dev.runwayml.com/v1'
-
-		// Initialize Runway API if we have a key
-		if (this.runwayConfig.apiKey) {
-			this.runwayAPI = new RunwayAPI(this.runwayConfig)
-		}
-
-		// Load OpenAI config from storage
-		const storedOpenAIConfig = localStorage.getItem('autovfx-openai-config')
-		if (storedOpenAIConfig) {
-			const openaiConfig = JSON.parse(storedOpenAIConfig)
-			this.openaiConfig = { ...this.openaiConfig, ...openaiConfig }
-		}
-
-		// Initialize OpenAI API if we have a key
-		if (this.openaiConfig.apiKey) {
-			this.openaiAPI = new OpenAIAPI(this.openaiConfig)
-		}
-
 		// Load and initialize licensing configuration
 		this.loadLicenseConfiguration()
 
@@ -452,8 +358,7 @@ class AutoVFX {
 		}
 
 		console.log('Configuration loaded:', {
-			hasRunwayKey: !!this.runwayConfig.apiKey,
-			licensingEnabled: this.licensingEnabled,
+			hasRunwayKey: !!this.runway.apiKey,
 			userConfig: this.userConfig,
 		})
 	}
@@ -468,159 +373,23 @@ class AutoVFX {
 	 * Load licensing configuration and initialize license API
 	 */
 	async loadLicenseConfiguration() {
-		try {
-			// Load license config from config.json
-			const response = await fetch('./config/config.json')
-			const config = await response.json()
-
-			// Load OpenAI configuration from config.json if available
-			if (config.openai) {
-				if (config.openai.apiKey) {
-					this.openaiConfig.apiKey = config.openai.apiKey
-					console.log('✅ OpenAI API key loaded from config.json')
-				}
-				if (config.openai.baseUrl) {
-					this.openaiConfig.baseUrl = config.openai.baseUrl
-				}
-				if (config.openai.model) {
-					this.openaiConfig.model = config.openai.model
-				}
-				if (config.openai.maxTokens) {
-					this.openaiConfig.maxTokens = config.openai.maxTokens
-				}
-
-				// Initialize OpenAI API if we have a key
-				if (this.openaiConfig.apiKey) {
-					this.openaiAPI = new OpenAIAPI(this.openaiConfig)
-
-					// Save to localStorage for persistence across sessions
-					localStorage.setItem(
-						'autovfx-openai-config',
-						JSON.stringify(this.openaiConfig),
-					)
-
-					console.log(
-						'🤖 OpenAI API initialized from config.json and saved to localStorage',
-					)
-				}
-			}
-
-			if (config.licensing && config.licensing.enabled) {
-				this.licensingEnabled = true
-				this.licenseAPI = new LicenseAPI(config.licensing.backend)
-
-				console.log('🔐 Licensing enabled:', {
-					baseUrl: config.licensing.backend.baseUrl,
-					hasStoredAuth: this.licenseAPI.isAuthenticated(),
-				})
-
-				// Check if user is already authenticated
-				if (this.licenseAPI.isAuthenticated()) {
-					try {
-						await this.licenseAPI.getMe()
-						// Ensure freshest balance from backend (reads Postgres when available)
-						await this.licenseAPI.getCredits()
-						this.showAuthenticatedState()
-					} catch (error) {
-						console.warn(
-							'⚠️  Stored auth invalid, requiring re-authentication',
-						)
-						this.licenseAPI.clearStoredAuth()
-						this.showAuthView()
-					}
-				} else {
-					this.showAuthView()
-				}
-			} else {
-				console.log(
-					'🔓 Licensing disabled, proceeding without authentication',
+		// Check if user is already authenticated
+		if (this.licenseAPI.isAuthenticated()) {
+			try {
+				await this.licenseAPI.getMe()
+				// Ensure freshest balance from backend (reads Postgres when available)
+				await this.licenseAPI.getCredits()
+				this.showAuthenticatedState()
+			} catch (error) {
+				console.warn(
+					'⚠️  Stored auth invalid, requiring re-authentication',
 				)
-				this.showView('exportView')
+				this.licenseAPI.clearStoredAuth()
+				this.showAuthView()
 			}
-		} catch (error) {
-			console.warn(
-				'⚠️  Failed to load license config, proceeding without licensing:',
-				error,
-			)
-			this.licensingEnabled = false
-			this.showView('exportView')
+		} else {
+			this.showAuthView()
 		}
-	}
-
-	/**
-	 * Configure Runway API key
-	 */
-	setRunwayApiKey(apiKey) {
-		this.runwayConfig.apiKey = apiKey
-
-		// Reinitialize Runway API with the new key
-		this.runwayAPI = new RunwayAPI(this.runwayConfig)
-
-		// Save to localStorage for persistence
-		localStorage.setItem(
-			'autovfx-config',
-			JSON.stringify(this.runwayConfig),
-		)
-
-		console.log('✅ Runway API key configured')
-
-		// Test the API connection
-		this.runwayAPI
-			.testConnection()
-			.then((result) => {
-				if (result.success) {
-					console.log('✅ Runway API connection successful')
-					this.showSuccess(
-						'Video generation API configured successfully!',
-					)
-				} else {
-					console.warn('⚠️  Runway API test failed:', result.error)
-					this.showError(
-						'API key set but connection test failed: ' +
-							result.error,
-					)
-				}
-			})
-			.catch((error) => {
-				console.warn('⚠️  Could not test Runway API connection:', error)
-			})
-	}
-
-	/**
-	 * Configure OpenAI API key for prompt enhancement
-	 */
-	setOpenAIApiKey(apiKey) {
-		this.openaiConfig.apiKey = apiKey
-
-		// Reinitialize OpenAI API with the new key
-		this.openaiAPI = new OpenAIAPI(this.openaiConfig)
-
-		// Save to localStorage for persistence
-		localStorage.setItem(
-			'autovfx-openai-config',
-			JSON.stringify(this.openaiConfig),
-		)
-
-		console.log('✅ OpenAI API key configured for prompt enhancement')
-
-		// Test the API connection
-		this.openaiAPI
-			.testConnection()
-			.then((result) => {
-				if (result.success) {
-					console.log('✅ OpenAI API connection successful')
-					this.showSuccess('OpenAI API configured successfully!')
-				} else {
-					console.warn('⚠️  OpenAI API test failed:', result.error)
-					this.showError(
-						'OpenAI API key set but connection test failed: ' +
-							result.error,
-					)
-				}
-			})
-			.catch((error) => {
-				console.warn('⚠️  Could not test OpenAI API connection:', error)
-			})
 	}
 
 	showView(viewId) {
@@ -981,9 +750,6 @@ class AutoVFX {
 		const enhanceBtn = document.getElementById('enhanceBtn')
 		const currentPrompt = promptInput.value.trim()
 
-		// If no client OpenAI key, fallback to server-side enhancement endpoint
-		const useServerEnhance = !this.openaiAPI || !this.openaiConfig.apiKey
-
 		// Check if there's a prompt to enhance
 		if (!currentPrompt) {
 			this.showError('Please enter a prompt to enhance')
@@ -995,45 +761,37 @@ class AutoVFX {
 			enhanceBtn.disabled = true
 			enhanceBtn.classList.add('loading')
 
-			console.log(
-				'🎨 Enhancing prompt:',
-				currentPrompt,
-				useServerEnhance ? '(server)' : '(client)',
-			)
+			console.log('🎨 Enhancing prompt:', currentPrompt, '(server)')
 
 			let result
-			if (useServerEnhance) {
-				// Use backend endpoint with server key
-				try {
-					const resp = await fetch(
-						`${this.licenseAPI.baseUrl}${this.licenseAPI.endpoints.enhance || '/enhance'}`,
-						{
-							method: 'POST',
-							headers: {
-								'Content-Type': 'application/json',
-							},
-							body: JSON.stringify({ prompt: currentPrompt }),
+
+			// Use backend endpoint with server key
+			try {
+				const resp = await fetch(
+					`https://autovfx.vercel.app/v1/enhance`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
 						},
+						body: JSON.stringify({ prompt: currentPrompt }),
+					},
+				)
+				if (!resp.ok) {
+					const txt = await resp.text().catch(() => '')
+					throw new Error(
+						`Server enhance failed: ${resp.status} ${txt}`,
 					)
-					if (!resp.ok) {
-						const txt = await resp.text().catch(() => '')
-						throw new Error(
-							`Server enhance failed: ${resp.status} ${txt}`,
-						)
-					}
-					const data = await resp.json()
-					result = {
-						success: true,
-						original: currentPrompt,
-						enhanced: data.enhanced,
-					}
-				} catch (err) {
-					console.error('❌ Server-side enhance error:', err)
-					throw err
 				}
-			} else {
-				// Call OpenAI API to enhance the prompt (client key)
-				result = await this.openaiAPI.enhancePrompt(currentPrompt)
+				const data = await resp.json()
+				result = {
+					success: true,
+					original: currentPrompt,
+					enhanced: data.enhanced,
+				}
+			} catch (err) {
+				console.error('❌ Server-side enhance error:', err)
+				throw err
 			}
 
 			if (result.success) {
@@ -1805,8 +1563,7 @@ class AutoVFX {
 					)
 				}
 
-				const status =
-					await this.runwayAPI.checkGenerationStatus(taskId)
+				const status = await this.runway.checkGenerationStatus(taskId)
 
 				if (status) {
 					const statusValue =
@@ -1990,7 +1747,7 @@ class AutoVFX {
 
 	// Runway API Integration
 	async generateWithRunway(videoPath, prompt, onProgress) {
-		if (!this.runwayAPI) {
+		if (!this.runway) {
 			throw new Error(
 				'Runway API not configured. Please set your API key.',
 			)
@@ -2087,25 +1844,21 @@ class AutoVFX {
 
 			// Don't set initial progress here - let the callback handle all progress updates
 
-			const result = await this.runwayAPI.processVideo(
-				videoFile,
-				prompt,
-				{
-					duration: 2,
-					ratio: '1280:720', // Official Runway API format
-					seed: Math.floor(Math.random() * 4294967295), // Random seed
-					referenceImage: this.referenceImage
-						? this.referenceImage.dataUrl
-						: null,
-					onProgress: (pct, meta) => {
-						if (onProgress) {
-							try {
-								onProgress(pct)
-							} catch (e) {}
-						}
-					},
+			const result = await this.runway.processVideo(videoFile, prompt, {
+				duration: 2,
+				ratio: '1280:720', // Official Runway API format
+				seed: Math.floor(Math.random() * 4294967295), // Random seed
+				referenceImage: this.referenceImage
+					? this.referenceImage.dataUrl
+					: null,
+				onProgress: (pct, meta) => {
+					if (onProgress) {
+						try {
+							onProgress(pct)
+						} catch (e) {}
+					}
 				},
-			)
+			})
 
 			// Complete the progress bar
 			if (onProgress) {
@@ -2272,10 +2025,10 @@ class AutoVFX {
 		const formData = new FormData()
 		formData.append('file', videoPath)
 
-		const response = await fetch(`${this.runwayConfig.baseUrl}/assets`, {
+		const response = await fetch(`${this.runway.baseUrl}/assets`, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${this.runwayConfig.apiKey}`,
+				Authorization: `Bearer ${this.runway.apiKey}`,
 			},
 			body: formData,
 		})
@@ -2289,11 +2042,11 @@ class AutoVFX {
 
 	async callRunwayGenerate(assetId, prompt) {
 		const response = await fetch(
-			`${this.runwayConfig.baseUrl}/gen4turbo/create`,
+			`${this.runway.baseUrl}/gen4turbo/create`,
 			{
 				method: 'POST',
 				headers: {
-					Authorization: `Bearer ${this.runwayConfig.apiKey}`,
+					Authorization: `Bearer ${this.runway.apiKey}`,
 					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify({
@@ -3118,271 +2871,6 @@ class AutoVFX {
 		return `${mins}:${secs.toString().padStart(2, '0')}`
 	}
 
-	// Add debug functions to global scope for console access
-	setupDebugFunctions() {
-		// Existing debug functions...
-
-		// Add prompt debugging
-		window.debugPrompt = (promptText) => {
-			if (!promptText) {
-				const currentPrompt =
-					document.getElementById('promptInput')?.value
-				if (currentPrompt) {
-					console.log('🔍 Debugging current prompt from UI...')
-					this.runwayAPI.debugPrompt(currentPrompt)
-				} else {
-					console.log(
-						'❌ No prompt found. Either provide text or enter a prompt in the UI.',
-					)
-				}
-			} else {
-				this.runwayAPI.debugPrompt(promptText)
-			}
-		}
-
-		window.testSafePrompt = () => {
-			const safePrompts = [
-				'Transform this scene into a dreamy, ethereal atmosphere with soft golden lighting',
-				'Add flowing, colorful particles that dance through the scene',
-				'Create a magical, surreal transformation with swirling clouds and gentle motion',
-				'Apply a cinematic color grade with warm sunset tones',
-				'Add subtle rain drops and atmospheric mist to the scene',
-			]
-			const randomPrompt =
-				safePrompts[Math.floor(Math.random() * safePrompts.length)]
-			document.getElementById('promptInput').value = randomPrompt
-			console.log('✨ Set a safe prompt:', randomPrompt)
-			console.log('💡 Click Generate to test this safe prompt')
-		}
-
-		window.showVideoVersions = () => {
-			console.log('📋 Current Video Versions:')
-			console.log(`📊 Total versions: ${this.videoVersions.size}`)
-			console.log(`🎯 Currently selected: ${this.selectedVideoSource}`)
-			console.log(`📍 Current index: ${this.currentVersionIndex}`)
-
-			if (this.videoVersions.size === 0) {
-				console.log('❌ No video versions found')
-				return
-			}
-
-			this.videoVersions.forEach((videoData, versionId) => {
-				console.log(`  📹 ${versionId}:`)
-				console.log(`    - Path: ${videoData.path}`)
-				console.log(`    - Prompt: ${videoData.prompt || 'No prompt'}`)
-				console.log(
-					`    - Timestamp: ${new Date(videoData.timestamp).toLocaleString()}`,
-				)
-			})
-
-			const versionSelector = document.getElementById(
-				'videoVersionSelector',
-			)
-			const isVisible =
-				versionSelector && !versionSelector.classList.contains('hidden')
-			console.log(`🔍 Version selector visible: ${isVisible}`)
-		}
-
-		// OpenAI API configuration functions
-		window.setOpenAIApiKey = (apiKey) => {
-			if (!apiKey) {
-				console.log('❌ Please provide an OpenAI API key')
-				console.log('💡 Usage: setOpenAIApiKey("your-api-key-here")')
-				return
-			}
-			this.setOpenAIApiKey(apiKey)
-		}
-
-		window.testEnhancePrompt = (prompt) => {
-			const testPrompt = prompt || 'add water to the scene'
-			document.getElementById('promptInput').value = testPrompt
-			console.log('🎨 Testing prompt enhancement with:', testPrompt)
-			console.log(
-				'💡 Click the ✨ button or use the enhance feature to see the result',
-			)
-		}
-
-		// Verification function for OpenAI setup
-		window.verifyOpenAISetup = () => {
-			console.log('🔍 Verifying OpenAI API setup...')
-			console.log('OpenAI Config:', {
-				hasApiKey: !!this.openaiConfig.apiKey,
-				apiKeyPrefix: this.openaiConfig.apiKey
-					? this.openaiConfig.apiKey.substring(0, 20) + '...'
-					: 'None',
-				baseUrl: this.openaiConfig.baseUrl,
-				model: this.openaiConfig.model,
-				maxTokens: this.openaiConfig.maxTokens,
-				hasAPI: !!this.openaiAPI,
-			})
-
-			const storedConfig = localStorage.getItem('autovfx-openai-config')
-			console.log(
-				'localStorage config:',
-				storedConfig ? JSON.parse(storedConfig) : 'None',
-			)
-
-			if (this.openaiAPI) {
-				console.log(
-					'✅ OpenAI API is properly configured and ready to use!',
-				)
-				console.log('💡 You can now use prompt enhancement features')
-			} else {
-				console.log('❌ OpenAI API is not configured')
-				console.log(
-					'💡 Use setOpenAIApiKey("your-key") to configure it',
-				)
-			}
-		}
-
-		window.enhanceCurrentPrompt = async () => {
-			const currentPrompt = document.getElementById('promptInput')?.value
-			if (!currentPrompt) {
-				console.log('❌ No prompt found in input field')
-				return
-			}
-
-			if (!this.openaiAPI) {
-				console.log(
-					'❌ OpenAI API not configured. Use setOpenAIApiKey() first',
-				)
-				return
-			}
-
-			try {
-				console.log('🎨 Enhancing prompt via console...')
-				const result = await this.openaiAPI.enhancePrompt(currentPrompt)
-				if (result.success) {
-					console.log('✅ Enhanced prompt:')
-					console.log('Original:', result.original)
-					console.log('Enhanced:', result.enhanced)
-					document.getElementById('promptInput').value =
-						result.enhanced
-				} else {
-					console.log('❌ Enhancement failed:', result.error)
-				}
-			} catch (error) {
-				console.log('❌ Error:', error.message)
-			}
-		}
-
-		window.testVideoControls = () => {
-			const video = document.getElementById('resultVideo')
-			const playPauseBtn = document.getElementById('playPauseBtn')
-			const progressBar = document.getElementById('progressBar')
-
-			// console.log('🎮 Video Controls Debug:');
-			// console.log('Video element:', video);
-			// console.log('Video src:', video?.src);
-			// console.log('Video paused:', video?.paused);
-			// console.log('Video duration:', video?.duration);
-			// console.log('Video readyState:', video?.readyState);
-			// console.log('Play/Pause button:', playPauseBtn);
-			// console.log('Progress bar:', progressBar);
-
-			if (video && video.src) {
-				video
-					.play()
-					.then(() => {
-						console.log('✅ Video playing manually')
-					})
-					.catch((error) => {
-						console.error('❌ Manual play failed:', error)
-					})
-			} else {
-				console.log('❌ No video or video src')
-			}
-		}
-
-		window.forceShowVersionSelector = () => {
-			this.showVersionSelector()
-			this.updateVersionSlider()
-			console.log('✅ Forced version selector to show and update')
-		}
-
-		window.debugVersionSlider = () => {
-			console.log('🔍 DEBUG Version Slider State:')
-			console.log(`  - currentVersionIndex: ${this.currentVersionIndex}`)
-			console.log(`  - selectedVideoSource: ${this.selectedVideoSource}`)
-			console.log(
-				`  - currentExportedVideo: ${!!this.currentExportedVideo}`,
-			)
-			console.log(`  - videoVersions.size: ${this.videoVersions.size}`)
-
-			// Build the same versions array as updateVersionSlider
-			const versions = []
-			if (this.currentExportedVideo) {
-				versions.push({ id: 'original', text: 'Original Footage' })
-			}
-
-			this.videoVersions.forEach((videoData, versionId) => {
-				if (
-					versionId !== 'original' &&
-					videoData.path &&
-					videoData.path !== 'runway-generation-initiated' &&
-					videoData.path !== 'runway-generation-completed-no-url'
-				) {
-					versions.push({
-						id: versionId,
-						text: `Generated Video ${versions.length}`,
-					})
-				}
-			})
-
-			console.log(
-				`  - Built versions array (${versions.length}):`,
-				versions,
-			)
-			console.log(
-				`  - Current version should be: ${versions[this.currentVersionIndex]?.text || 'INVALID INDEX'}`,
-			)
-
-			// Check UI elements
-			const currentVersionText =
-				document.getElementById('currentVersionText')
-			const prevBtn = document.getElementById('versionPrevBtn')
-			const nextBtn = document.getElementById('versionNextBtn')
-
-			console.log(
-				`  - UI currentVersionText: "${currentVersionText?.textContent}"`,
-			)
-			console.log(
-				`  - UI prevBtn exists: ${!!prevBtn}, disabled: ${prevBtn?.disabled}`,
-			)
-			console.log(
-				`  - UI nextBtn exists: ${!!nextBtn}, disabled: ${nextBtn?.disabled}`,
-			)
-			console.log(
-				`  - Button state calculation: index=${this.currentVersionIndex}, length=${versions.length}`,
-			)
-			console.log(
-				`  - Should prev be disabled: ${this.currentVersionIndex === 0}`,
-			)
-			console.log(
-				`  - Should next be disabled: ${this.currentVersionIndex === versions.length - 1}`,
-			)
-		}
-
-		window.switchToGenerated = () => {
-			if (this.videoVersions.size > 0) {
-				this.currentVersionIndex = 1 // Move to first generated video (index 0 = original, index 1 = first generated)
-				this.updateVersionSlider()
-				console.log('✅ Switched to generated video')
-			} else {
-				console.log('❌ No generated videos available')
-			}
-		}
-
-		window.testNavigation = () => {
-			console.log('🧪 Testing version navigation...')
-			window.debugVersionSlider()
-			console.log('📍 Clicking next button...')
-			this.navigateVersion(1)
-			console.log('📍 After clicking next:')
-			window.debugVersionSlider()
-		}
-	}
-
 	updateGenerateButtonProgress(percent) {
 		const btn = document.getElementById('generateBtn')
 		if (!btn) return
@@ -3407,8 +2895,6 @@ class AutoVFX {
 	 * Handle sign in
 	 */
 	async handleSignIn() {
-		if (!this.licensingEnabled) return
-
 		const email = document.getElementById('authEmail').value.trim()
 
 		if (!email) {
@@ -3440,50 +2926,6 @@ class AutoVFX {
 		} finally {
 			this.showAuthLoading(false)
 		}
-	}
-
-	/**
-	 * Handle magic link request
-	 */
-	async handleMagicLink() {
-		if (!this.licensingEnabled) return
-
-		const email = document.getElementById('authEmail').value.trim()
-
-		if (!email) {
-			this.showAuthError('Email is required for magic link')
-			return
-		}
-
-		this.showAuthLoading(true)
-		this.hideAuthError()
-
-		try {
-			await this.licenseAPI.authenticate({ email, magicLink: true })
-			this.showAuthSuccess('Magic link sent! Check your email.')
-		} catch (error) {
-			console.error('❌ Magic link failed:', error)
-			this.showAuthError(
-				error.message || 'Failed to send magic link. Please try again.',
-			)
-		} finally {
-			this.showAuthLoading(false)
-		}
-	}
-
-	/**
-	 * Handle sign up
-	 */
-	async handleSignUp() {
-		if (!this.licensingEnabled) return
-
-		// For now, redirect to external signup
-		this.showAuthError(
-			'Please sign up at our website first, then sign in here.',
-		)
-
-		// TODO: Open external signup URL
-		// this.openExternalUrl('https://your-app.com/signup');
 	}
 
 	/**
@@ -3659,8 +3101,6 @@ class AutoVFX {
 	 * Check if user has enough credits for generation
 	 */
 	async checkCreditsBeforeGeneration(durationSeconds = 10) {
-		if (!this.licensingEnabled) return true
-
 		const check = this.licenseAPI.canGenerate(durationSeconds)
 
 		if (!check.canGenerate) {
@@ -3675,8 +3115,6 @@ class AutoVFX {
 	 * Reserve credits for generation
 	 */
 	async reserveCreditsForGeneration(durationSeconds = 10) {
-		if (!this.licensingEnabled) return { success: true }
-
 		try {
 			const reservation =
 				await this.licenseAPI.reserveCredits(durationSeconds)
@@ -3703,8 +3141,6 @@ class AutoVFX {
 	 * Handle upgrade subscription
 	 */
 	async handleUpgrade() {
-		if (!this.licensingEnabled) return
-
 		try {
 			const portalUrl = await this.licenseAPI.getPortalLink()
 			this.openExternalUrl(portalUrl)
@@ -3731,8 +3167,6 @@ class AutoVFX {
 	 * Handle quick top-up
 	 */
 	async handleTopup() {
-		if (!this.licensingEnabled) return
-
 		// Show the insufficient credits modal with top-up options
 		this.showInsufficientCreditsModal(0, this.licenseAPI.creditBalance)
 	}
@@ -3741,8 +3175,6 @@ class AutoVFX {
 	 * Handle account management
 	 */
 	async handleAccount() {
-		if (!this.licensingEnabled) return
-
 		try {
 			const portalUrl = await this.licenseAPI.getPortalLink()
 			this.openExternalUrl(portalUrl)
@@ -3769,8 +3201,6 @@ class AutoVFX {
 	 * Handle top-up purchase
 	 */
 	async handleTopupPurchase(pack) {
-		if (!this.licensingEnabled) return
-
 		try {
 			const checkoutUrl = await this.licenseAPI.getTopupCheckoutLink(pack)
 			this.openExternalUrl(checkoutUrl)
@@ -3822,25 +3252,16 @@ class AutoVFX {
 	 */
 	showAuthLoading(loading) {
 		const signInBtn = document.getElementById('signInBtn')
-		const magicLinkBtn = document.getElementById('magicLinkBtn')
 
 		if (loading) {
 			if (signInBtn) {
 				signInBtn.disabled = true
 				signInBtn.textContent = 'Signing in...'
 			}
-			if (magicLinkBtn) {
-				magicLinkBtn.disabled = true
-				magicLinkBtn.textContent = 'Sending...'
-			}
 		} else {
 			if (signInBtn) {
 				signInBtn.disabled = false
 				signInBtn.textContent = 'Sign In'
-			}
-			if (magicLinkBtn) {
-				magicLinkBtn.disabled = false
-				magicLinkBtn.textContent = 'Send Magic Link'
 			}
 		}
 	}
@@ -3883,11 +3304,6 @@ class AutoVFX {
 	 * Settle credits on video generation completion
 	 */
 	async settleCreditsOnCompletion(taskId, success, actualSeconds = 0) {
-		if (!this.licensingEnabled || !this.licenseAPI) {
-			console.log('🔓 Licensing disabled, skipping credit settlement')
-			return
-		}
-
 		try {
 			console.log(`💰 Settling credits for task ${taskId}:`, {
 				success,
@@ -3960,112 +3376,4 @@ class AutoVFX {
 // Initialize the application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
 	window.autoVFX = new AutoVFX()
-
-	// Expose test function for new export method
-	window.testNewExport = async () => {
-		console.log('🧪 Testing new simplified export method...')
-		try {
-			const result = await window.autoVFX.exportVideoSegment()
-			console.log('✅ Export test completed:', result)
-		} catch (error) {
-			console.error('❌ Export test failed:', error.message)
-		}
-	}
-
-	// Test the UI export button functionality
-	window.testUIExport = async () => {
-		console.log(
-			'🎬 Testing UI export button (same as clicking Export button)...',
-		)
-		try {
-			const result = await window.autoVFX.handleExport()
-			console.log('✅ UI export test completed')
-		} catch (error) {
-			console.error('❌ UI export test failed:', error.message)
-		}
-	}
-
-	// Log available console commands after a brief delay
-	// setTimeout(() => {
-	//     console.log('🚀 AutoVFX loaded! Available console commands:');
-	//     console.log('');
-	//     console.log('🎬 Export Commands:');
-	//     console.log('   testUIExport() - Test the UI export button (using Premiere Pro native export)');
-	//     console.log('   testNewExport() - Test the new simplified export method');
-	//     console.log('   testPlayheadExport() - Test playhead calculation');
-	//     console.log('');
-	//     console.log('🎬 Runway API Commands:');
-	//     console.log('   window.autoVFX.runwayAPI.testConnection() - Test API connection');
-	//     console.log('   testRunwayAPI() - 🧪 Full API connection test');
-	//     console.log('   debugLastTask("TASK_ID") - 🔍 Debug specific task response');
-	//     console.log('   refreshAPI() - Force API refresh (fixes cached endpoints)');
-	//     console.log('');
-	//     console.log('🛠️  Debug Commands:');
-	//     console.log('   showConfig() - Show current configuration');
-	//     console.log('   clearCache() - Clear all cached data');
-	//     console.log('   showSystemInfo() - Show system info');
-	//     console.log('   debugMediaFiles() - Debug why timeline shows blue screen');
-	//     console.log('   diagnoseExport() - Complete export diagnosis');
-	//     console.log('   checkDesktopFiles() - Check what files are actually on Desktop');
-	//     console.log('   debugPrompt() - 🔍 Debug current prompt for content moderation issues');
-	//     console.log('   debugPrompt("your text") - 🔍 Debug specific prompt text');
-	//     console.log('   testSafePrompt() - ✨ Fill input with a safe prompt example');
-	//     console.log('   setOpenAIApiKey("your-key") - 🔑 Configure OpenAI API for prompt enhancement');
-	//     console.log('   verifyOpenAISetup() - ✅ Verify OpenAI API configuration status');
-	//     console.log('   testEnhancePrompt("text") - 🎨 Test prompt enhancement with sample text');
-	//     console.log('   enhanceCurrentPrompt() - ✨ Enhance the current prompt in the UI');
-	//     console.log('   showVideoVersions() - 📋 Show all generated video versions');
-	//     console.log('   forceShowVersionSelector() - 🔧 Force show the version selector');
-	//     console.log('   debugVersionSlider() - 🔍 Debug version slider state and UI');
-	//     console.log('   switchToGenerated() - 🎯 Switch to first generated video');
-	//     console.log('   testNavigation() - 🧪 Test version navigation buttons');
-	//     console.log('');
-	//     console.log('🚨 Emergency Fixes:');
-	//     console.log('   fixAPIUrl() - Fix wrong API URL issue');
-	//     console.log('   checkYourVideo() - Check your specific video that was at 79%');
-	//     console.log('   testImport() - Test download + import of your generated video');
-	//     console.log('   forceImport() - FORCE import your generated video to timeline');
-	//     console.log('   testPositionImport() - Test position-aware import with auto-scaling');
-	//     console.log('   showExportPosition() - Show current stored export position');
-	//     console.log('   testJSXImport() - Test JSX import function directly (debug parsing)');
-	//     console.log('   debugForwardButton() - 🔍 Check forward button state');
-	//     console.log('');
-	// }, 1000);
-
-	// Debug forward button function
-	window.debugForwardButton = () => {
-		const forwardBtn = document.getElementById('forwardBtn')
-		console.log('🔍 Forward Button Debug:')
-		console.log('  - Button exists:', !!forwardBtn)
-		console.log(
-			'  - Has disabled class:',
-			forwardBtn?.classList.contains('disabled'),
-		)
-		console.log(
-			'  - Current view:',
-			document.querySelector('.view.active')?.id,
-		)
-		console.log(
-			'  - Generated video exists:',
-			!!window.autoVFX.generatedVideo,
-		)
-		console.log(
-			'  - Video versions count:',
-			window.autoVFX.videoVersions?.size || 0,
-		)
-		console.log(
-			'  - Current exported video:',
-			!!window.autoVFX.currentExportedVideo,
-		)
-
-		// Try to enable the button manually
-		if (forwardBtn) {
-			console.log('🔧 Attempting to manually enable forward button...')
-			forwardBtn.classList.remove('disabled')
-			console.log(
-				'  - After manual enable, has disabled class:',
-				forwardBtn.classList.contains('disabled'),
-			)
-		}
-	}
 })

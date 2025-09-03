@@ -1,23 +1,17 @@
+// @ts-check
+
 /**
  * License API Manager
  * Handles backend communication for licensing, authentication, and credit management
  */
 
 class LicenseAPI {
-	constructor(config = {}) {
-		this.baseUrl = config.baseUrl || 'https://your-backend-api.com/v1'
-		this.endpoints = config.endpoints || {}
+	constructor() {
 		this.currentUser = null
 		this.authToken = null
 		this.creditBalance = 0
 		this.subscription = null
 		this.cycle = null
-
-		console.log('🔐 LicenseAPI initialized:', {
-			baseUrl: this.baseUrl,
-			hasEndpoints: Object.keys(this.endpoints).length > 0,
-		})
-
 		// Load stored auth token
 		this.loadStoredAuth()
 	}
@@ -88,7 +82,7 @@ class LicenseAPI {
 	 * Make authenticated API request
 	 */
 	async makeRequest(endpoint, options = {}) {
-		const url = `${this.baseUrl}${endpoint}`
+		const url = `https://autovfx.vercel.app/v1${endpoint}`
 		const config = {
 			headers: {
 				'Content-Type': 'application/json',
@@ -121,10 +115,7 @@ class LicenseAPI {
 					errorData.detail ||
 					''
 				if (response.status === 404) {
-					throw new Error(
-						apiMsg ||
-							`Service not found (404). Check backend URL in config/config.json and that the server is running.`,
-					)
+					throw new Error(apiMsg || `Service not found (404)`)
 				}
 				if (response.status === 0) {
 					throw new Error(
@@ -160,15 +151,10 @@ class LicenseAPI {
 	 */
 	async authenticate(credentials) {
 		try {
-			const response = await this.makeRequest(this.endpoints.auth, {
+			const response = await this.makeRequest('/auth', {
 				method: 'POST',
 				body: JSON.stringify(credentials),
 			})
-
-			// Handle magic link response (no token, just success message)
-			if (credentials.magicLink && response.success) {
-				return response // Just return the success message
-			}
 
 			// Handle regular login response (with token)
 			if (response.token && response.user) {
@@ -188,13 +174,13 @@ class LicenseAPI {
 	 */
 	async getMe() {
 		try {
-			const response = await this.makeRequest(this.endpoints.me)
+			const response = await this.makeRequest('/me')
 
 			if (response.user) {
 				this.currentUser = response.user
 				this.subscription = response.subscription
 				this.cycle = response.cycle
-				this.creditBalance = response.balance || 0
+				this.creditBalance = response.balance
 
 				console.log('👤 User info updated:', {
 					email: this.currentUser.email,
@@ -220,9 +206,9 @@ class LicenseAPI {
 	 */
 	async getCredits() {
 		try {
-			const response = await this.makeRequest(this.endpoints.credits)
+			const response = await this.makeRequest('/credits')
 
-			this.creditBalance = response.balance || 0
+			this.creditBalance = response.balance
 			this.cycle = response.cycle
 
 			console.log('💰 Credits updated:', {
@@ -264,7 +250,7 @@ class LicenseAPI {
 	 */
 	async reserveCredits(requestedSeconds) {
 		try {
-			const response = await this.makeRequest(this.endpoints.jobs, {
+			const response = await this.makeRequest('/jobs', {
 				method: 'POST',
 				body: JSON.stringify({ requestedSeconds }),
 			})
@@ -289,9 +275,7 @@ class LicenseAPI {
 	 */
 	async getJobStatus(taskId) {
 		try {
-			const response = await this.makeRequest(
-				`${this.endpoints.jobs}/${taskId}`,
-			)
+			const response = await this.makeRequest(`/jobs/${taskId}`)
 
 			console.log('📊 Job status:', {
 				taskId: taskId,
@@ -312,7 +296,7 @@ class LicenseAPI {
 	 */
 	async getPortalLink() {
 		try {
-			const response = await this.makeRequest(this.endpoints.portal, {
+			const response = await this.makeRequest('/portal-link', {
 				method: 'POST',
 			})
 
@@ -329,7 +313,7 @@ class LicenseAPI {
 	 */
 	async getTopupCheckoutLink(pack) {
 		try {
-			const response = await this.makeRequest(this.endpoints.checkout, {
+			const response = await this.makeRequest('/checkout/topup', {
 				method: 'POST',
 				body: JSON.stringify({ pack }),
 			})
