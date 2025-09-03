@@ -1,5 +1,3 @@
-const app = require('../webhook-server');
+const app = require('./webhook-server')
 
-module.exports = app;
-
-
+module.exports = app

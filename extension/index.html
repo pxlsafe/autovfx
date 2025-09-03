@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>AutoVFX</title>
+		<link rel="stylesheet" href="css/styles.css" />
+	</head>
+	<body>
+		<div class="container">
+			<!-- Auth View -->
+			<div id="authView" class="view">
+				<div class="logo logoButton">
+					<img
+						src="css/autovfx_logo.png"
+						alt="AutoVFX"
+						onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+					/>
+				</div>
+
+				<div class="setts-section">
+					<h2>Sign in to continue</h2>
+					<p class="auth-subtitle">
+						Enter the email you used to purchase
+					</p>
+
+					<div class="auth-form">
+						<div class="input-group">
+							<input
+								type="email"
+								id="authEmail"
+								class="auth-input"
+								placeholder="your@email.com"
+								required
+							/>
+						</div>
+
+						<p class="auth-help-text">
+							Use the same email you used at checkout. We'll sign
+							you in to access your credits.
+						</p>
+
+						<button id="signInBtn" class="main-button auth-button">
+							Sign In
+						</button>
+					</div>
+
+					<div id="authError" class="error-message hidden"></div>
+					<div id="authSuccess" class="success-message hidden"></div>
+				</div>
+
+				<!-- Storage settings removed -->
+			</div>
+
+			<!-- Account Info Modal -->
+			<div id="accountModal" class="modal hidden">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h3>Account Information</h3>
+						<button id="closeAccountModal" class="modal-close">
+							&times;
+						</button>
+					</div>
+					<div class="modal-body">
+						<div class="account-info-section">
+							<div class="user-info-modal">
+								<div class="user-details">
+									<span
+										id="modalUserEmail"
+										class="user-email"
+									></span>
+									<span
+										id="modalSubscriptionTier"
+										class="tier-badge"
+									></span>
+								</div>
+							</div>
+
+							<div class="credit-info-modal">
+								<div class="credit-balance-modal">
+									<div class="credit-count-large">
+										<span id="modalCreditCount">0</span>
+										<span class="credit-label"
+											>credits</span
+										>
+									</div>
+									<!-- Credit duration display removed -->
+								</div>
+
+								<div class="usage-bar-modal">
+									<div
+										id="modalUsageProgress"
+										class="usage-progress"
+									></div>
+								</div>
+
+								<div class="cycle-info-modal">
+									<span
+										id="modalCycleEnd"
+										class="cycle-end"
+									></span>
+								</div>
+							</div>
+
+							<!-- Account action buttons removed -->
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Insufficient Credits Modal -->
+			<div id="insufficientCreditsModal" class="modal hidden">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h3>Insufficient Credits</h3>
+						<button id="closeInsufficientModal" class="modal-close">
+							&times;
+						</button>
+					</div>
+					<div class="modal-body">
+						<p>
+							You need <span id="creditsNeeded">0</span> credits
+							but only have <span id="creditsAvailable">0</span>.
+						</p>
+						<p>Get more credits to continue:</p>
+
+						<div class="credit-options">
+							<div class="credit-option">
+								<h4>Get More Credits</h4>
+								<div class="tier-comparison">
+									<div class="tier-card">
+										<h5>Starter</h5>
+										<div class="tier-price">$49/mo</div>
+										<div class="tier-credits">
+											3,750 credits
+										</div>
+										<div class="tier-duration">
+											~50 videos
+										</div>
+									</div>
+									<div class="tier-card">
+										<h5>Pro</h5>
+										<div class="tier-price">$79/mo</div>
+										<div class="tier-credits">
+											7,500 credits
+										</div>
+										<div class="tier-duration">
+											~100 videos
+										</div>
+									</div>
+									<div class="tier-card">
+										<h5>Exclusive</h5>
+										<div class="tier-price">$199/mo</div>
+										<div class="tier-credits">
+											15,000 credits
+										</div>
+										<div class="tier-duration">
+											~200 videos
+										</div>
+									</div>
+								</div>
+								<button
+									id="upgradeModalBtn"
+									class="upgrade-btn"
+								>
+									Get More Credits
+								</button>
+								<button
+									id="manageSubBtn"
+									class="upgrade-btn"
+									style="
+										margin-top: 8px;
+										background: transparent;
+										border: 1px solid var(--primary);
+										color: var(--primary);
+									"
+								>
+									Manage Subscription
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Export View -->
+			<div id="exportView" class="view active">
+				<div class="logo logoButton" title="Click for account info">
+					<img
+						src="css/autovfx_logo.png"
+						alt="AutoVFX"
+						onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+					/>
+				</div>
+
+				<div class="export-section">
+					<!-- Progress Bar (initially hidden) -->
+					<div id="progressSection" class="progress-section hidden">
+						<div class="progress-text">Exporting...</div>
+						<div class="progress-bar">
+							<div id="progressFill" class="progress-fill"></div>
+						</div>
+						<div id="progressPercent" class="progress-percent">
+							0%
+						</div>
+					</div>
+				</div>
+
+				<div class="file-size-info">
+					<div id="fileSizeInfo" class="size-indicator hidden">
+						<span class="size-text"
+							>File size:
+							<span id="fileSizeValue">0 MB</span></span
+						>
+						<span class="size-limit">Processing limit: 12 MB</span>
+					</div>
+				</div>
+
+				<div class="action-buttons">
+					<button id="exportBtn" class="main-button export-button">
+						Export
+					</button>
+				</div>
+			</div>
+
+			<!-- Prompt View -->
+			<div id="promptView" class="view">
+				<div class="logo logoButton" title="Click for account info">
+					<img
+						src="css/autovfx_logo.png"
+						alt="AutoVFX"
+						onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+					/>
+				</div>
+
+				<div class="prompt-section">
+					<h2>What do you want to create?</h2>
+
+					<div class="input-section">
+						<div class="prompt-input-container">
+							<textarea
+								id="promptInput"
+								class="prompt-input"
+								placeholder="Describe your creative vision in detail..."
+							></textarea>
+							<button
+								id="enhanceBtn"
+								class="enhance-button"
+								title="Enhance prompt with AI"
+							>
+								<img
+									src="css/enhance-effect-svgrepo-com.svg"
+									alt="Enhance"
+									class="button-icon"
+								/>
+							</button>
+							<button
+								id="referenceImageBtn"
+								class="reference-image-button"
+								title="Upload reference image"
+							>
+								<img
+									src="css/photo-svgrepo-com.svg"
+									alt="Reference Image"
+									class="button-icon"
+								/>
+							</button>
+							<input
+								type="file"
+								id="referenceImageInput"
+								accept="image/*"
+								style="display: none"
+							/>
+							<div
+								id="referenceImagePreview"
+								class="reference-image-preview"
+							>
+								<img
+									id="referenceImageImg"
+									src=""
+									alt="Reference"
+								/>
+								<div
+									class="remove-reference"
+									title="Remove reference image"
+								>
+									×
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Video Version Selector (slider) -->
+					<div
+						id="videoVersionSelector"
+						class="version-selector-inline hidden"
+					>
+						<h4>Source</h4>
+						<div class="version-slider-container">
+							<div class="version-display">
+								<button
+									id="versionPrevBtn"
+									class="version-nav-button"
+									disabled
+								>
+									<img
+										src="css/next-svgrepo-com.svg"
+										alt="Previous"
+										class="button-icon nav-icon nav-icon-left"
+									/>
+								</button>
+								<span id="currentVersionText"
+									>Original Footage</span
+								>
+								<button
+									id="versionNextBtn"
+									class="version-nav-button"
+									disabled
+								>
+									<img
+										src="css/next-svgrepo-com.svg"
+										alt="Next"
+										class="button-icon nav-icon"
+									/>
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<div class="action-buttons">
+						<button
+							id="promptResetBtn"
+							class="icon-button reset-button"
+							title="Reset"
+						>
+							<img
+								src="css/reset-svgrepo-com.svg"
+								alt="Reset"
+								class="button-icon"
+							/>
+						</button>
+						<button id="generateBtn" class="generate-button">
+							Generate
+						</button>
+						<button
+							id="forwardBtn"
+							class="icon-button"
+							title="View Result"
+						>
+							<img
+								src="css/next-svgrepo-com.svg"
+								alt="Next"
+								class="button-icon nav-icon"
+							/>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Result View -->
+			<div id="resultView" class="view">
+				<div class="logo logoButton">
+					<img
+						src="css/autovfx_logo.png"
+						alt="AutoVFX"
+						onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+					/>
+				</div>
+
+				<div class="result-content">
+					<!-- Video Version Selector (slider) in Result View -->
+					<div
+						id="videoVersionSelectorResult"
+						class="version-selector-inline hidden"
+					>
+						<h4>Source</h4>
+						<div class="version-slider-container">
+							<div class="version-display">
+								<button
+									id="versionPrevBtnResult"
+									class="version-nav-button"
+									disabled
+								>
+									<img
+										src="css/next-svgrepo-com.svg"
+										alt="Previous"
+										class="button-icon nav-icon nav-icon-left"
+									/>
+								</button>
+								<span id="currentVersionTextResult"
+									>Original Footage</span
+								>
+								<button
+									id="versionNextBtnResult"
+									class="version-nav-button"
+									disabled
+								>
+									<img
+										src="css/next-svgrepo-com.svg"
+										alt="Next"
+										class="button-icon nav-icon"
+									/>
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<div class="video-container">
+						<video
+							id="resultVideo"
+							preload="metadata"
+							muted
+							playsinline
+						></video>
+					</div>
+				</div>
+
+				<div class="action-buttons">
+					<button id="backBtn" class="icon-button" title="Back">
+						<img
+							src="css/next-svgrepo-com.svg"
+							alt="Back"
+							class="button-icon nav-icon nav-icon-left"
+						/>
+					</button>
+					<button
+						id="importBtn"
+						class="generate-button import-button"
+						title="Import"
+					>
+						Import
+					</button>
+					<button
+						id="resetBtn"
+						class="icon-button reset-button"
+						title="Reset"
+					>
+						<img
+							src="css/reset-svgrepo-com.svg"
+							alt="Reset"
+							class="button-icon"
+						/>
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Loading overlay -->
+		<div id="loadingOverlay" class="loading-overlay hidden">
+			<div class="spinner"></div>
+		</div>
+
+		<div id="toast" class="toast hidden"></div>
+
+		<script src="js/CSInterface.js"></script>
+		<!-- FFmpeg scripts removed - using Premiere Pro native export -->
+		<!-- <script src="js/test-pattern-fix.js"></script> -->
+		<script src="js/debug-helpers.js"></script>
+		<script src="js/license-api.js"></script>
+		<script src="js/runway-api.js"></script>
+		<!-- <script src="js/runway-diagnostics.js"></script> -->
+		<!-- <script src="js/import-diagnostics.js"></script> -->
+		<script src="js/openai-api.js"></script>
+		<script src="js/main.js"></script>
+	</body>
+</html>

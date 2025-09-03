@@ -1,0 +1,127 @@
+{
+	"runway": {
+		"apiKey": "",
+		"baseUrl": "https://api.aimlapi.com/v1",
+		"defaultModel": "gen4_turbo",
+		"defaultDuration": 10,
+		"defaultRatio": "16:9",
+		"watermark": false
+	},
+	"licensing": {
+		"enabled": true,
+		"backend": {
+			"baseUrl": "https://autovfx.vercel.app/v1",
+			"endpoints": {
+				"auth": "/auth",
+				"me": "/me",
+				"credits": "/credits",
+				"jobs": "/jobs",
+				"webhooks": "/webhooks/shopify",
+				"portal": "/portal-link",
+				"checkout": "/checkout/topup",
+				"enhance": "/enhance"
+			}
+		},
+		"apstle": {
+			"apiBase": "https://subscription-admin.appstle.com/api/external/v2",
+			"apiKey": "V8v5lUCT7EdIdgb5h93QJJXYgHwdXS1H",
+			"sellingPlanGroups": {
+				"tier1": "690384601430",
+				"tier2": "690385518934",
+				"tier3": "690385551702"
+			},
+			"shopify": {
+				"storeUrl": "pxlsafe.com",
+				"webhookSecret": "",
+				"topupProducts": {
+					"credits_1000": "shopify-product-id-1000",
+					"credits_2000": "shopify-product-id-2000"
+				}
+			}
+		},
+		"credits": {
+			"secondsPerCredit": 5,
+			"tiers": {
+				"tier1": {
+					"name": "Tier 1",
+					"price": 49,
+					"credits": 1000,
+					"duration": "~83.3 min"
+				},
+				"tier2": {
+					"name": "Tier 2",
+					"price": 79,
+					"credits": 2500,
+					"duration": "~208.3 min"
+				},
+				"tier3": {
+					"name": "Tier 3",
+					"price": 199,
+					"credits": 8000,
+					"duration": "~666.7 min"
+				}
+			},
+			"topups": {
+				"credits_1000": {
+					"name": "+1,000 credits",
+					"price": 30,
+					"credits": 1000
+				},
+				"credits_2000": {
+					"name": "+2,000 credits",
+					"price": 50,
+					"credits": 2000
+				}
+			}
+		},
+		"ui": {
+			"showCreditsInHeader": true,
+			"showUsageBar": true,
+			"showCycleEnd": true,
+			"requireAuthForGeneration": true
+		}
+	},
+	"openai": {
+		"apiKey": "",
+		"baseUrl": "https://api.openai.com/v1",
+		"model": "gpt-4",
+		"maxTokens": 300,
+		"enabled": true
+	},
+	"export": {
+		"defaultFormat": "mp4",
+		"defaultPreset": "YouTube 1080p HD",
+		"runwayPreset": "AutoVFX_runway_16mb",
+		"outputDirectory": "Desktop",
+		"filenamePrefix": "autovfx_export_",
+		"preferredMethod": "premiere",
+		"fallbackToFFmpeg": true,
+		"maxFileSizeMB": 16,
+		"runwayOptimization": {
+			"enabled": true,
+			"targetSizeMB": 15,
+			"maxBitrateMbps": 8,
+			"resolution": "1280x720",
+			"framerate": 30
+		}
+	},
+	"ffmpeg": {
+		"enabled": true,
+		"autoDownload": true,
+		"quality": "medium",
+		"codec": "libx264",
+		"audioCodec": "aac",
+		"optimizeForWeb": true,
+		"maxDuration": 300
+	},
+	"ui": {
+		"theme": "dark",
+		"showTooltips": true,
+		"autoAdvanceViews": true,
+		"progressUpdateInterval": 500
+	},
+	"debug": {
+		"enableLogging": true,
+		"logLevel": "info"
+	}
+}
