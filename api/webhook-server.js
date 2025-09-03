@@ -1,133 +1,20 @@
+// @ts-check
+
 require('dotenv').config()
 const express = require('express')
 const crypto = require('crypto')
-const fs = require('fs')
-const path = require('path')
-let pgPool = null
 const app = express()
+const { Pool } = require('pg')
+const { attachDatabasePool } = require('@vercel/functions')
 
-// In-memory demo store (persisted to disk). Replace with DB in production.
-const usersByEmail = new Map() // email -> { balance, planId, planName, cycleEnd, shopifyCustomerId }
-const tokens = new Map() // token -> email (not persisted)
-const processedWebhookIds = new Set()
+verifyEnvVariables()
 
-// Simple JSON persistence
-const DATA_DIR = path.join(__dirname, 'data')
-const DATA_FILE = path.join(DATA_DIR, 'store.json')
-let saveTimer = null
+const pool = new Pool({
+	connectionString: process.env.DATABASE_URL,
+	connectionTimeoutMillis: 5000,
+})
 
-async function initDatabaseIfConfigured() {
-	if (!process.env.DATABASE_URL) return false
-	try {
-		const { Pool } = require('pg')
-		pgPool = new Pool({
-			connectionString: process.env.DATABASE_URL,
-			ssl: { rejectUnauthorized: false },
-		})
-		await pgPool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                email TEXT PRIMARY KEY,
-                balance INTEGER NOT NULL DEFAULT 0,
-                plan_id TEXT,
-                plan_name TEXT,
-                cycle_end TIMESTAMPTZ,
-                shopify_customer_id TEXT
-            );
-        `)
-		console.log('🗄️  Postgres connected')
-		// Load users into memory cache
-		const { rows } = await pgPool.query(
-			'SELECT email, balance, plan_id, plan_name, cycle_end, shopify_customer_id FROM users',
-		)
-		rows.forEach((r) =>
-			usersByEmail.set(r.email, {
-				balance: r.balance,
-				planId: r.plan_id || 'none',
-				planName: r.plan_name || 'none',
-				cycleEnd: r.cycle_end || null,
-				shopifyCustomerId: r.shopify_customer_id || null,
-			}),
-		)
-		console.log(`💾 Loaded ${rows.length} users from Postgres`)
-		return true
-	} catch (e) {
-		console.warn('⚠️  Failed to init Postgres:', e.message)
-		pgPool = null
-		return false
-	}
-}
-
-function loadStoreFromDisk() {
-	try {
-		if (fs.existsSync(DATA_FILE)) {
-			const raw = fs.readFileSync(DATA_FILE, 'utf8')
-			const json = JSON.parse(raw || '{}')
-			const users = json.users || {}
-			Object.keys(users).forEach((email) =>
-				usersByEmail.set(email, users[email]),
-			)
-			console.log(`💾 Loaded ${usersByEmail.size} users from disk`)
-		} else {
-			fs.mkdirSync(DATA_DIR, { recursive: true })
-			fs.writeFileSync(DATA_FILE, JSON.stringify({ users: {} }, null, 2))
-		}
-	} catch (e) {
-		console.warn('⚠️  Failed to load store.json:', e.message)
-	}
-}
-
-function scheduleSave() {
-	if (pgPool) {
-		// Write-through: upsert all changed users individually would be ideal; for simplicity, upsert all current user
-		// To keep it simple and safe, this helper will be used right after a single-user change.
-		return // no-op; use upsertUserToDb directly where changes happen
-	}
-	if (saveTimer) clearTimeout(saveTimer)
-	saveTimer = setTimeout(() => {
-		try {
-			const users = {}
-			for (const [email, data] of usersByEmail.entries())
-				users[email] = data
-			fs.writeFileSync(DATA_FILE, JSON.stringify({ users }, null, 2))
-		} catch (e) {
-			console.warn('⚠️  Failed to save store.json:', e.message)
-		}
-	}, 250)
-}
-async function upsertUserToDb(email) {
-	if (!pgPool) return
-	const u = usersByEmail.get(email)
-	if (!u) return
-	try {
-		await pgPool.query(
-			`
-            INSERT INTO users (email, balance, plan_id, plan_name, cycle_end, shopify_customer_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (email) DO UPDATE SET
-                balance = EXCLUDED.balance,
-                plan_id = EXCLUDED.plan_id,
-                plan_name = EXCLUDED.plan_name,
-                cycle_end = EXCLUDED.cycle_end,
-                shopify_customer_id = EXCLUDED.shopify_customer_id;
-        `,
-			[
-				email,
-				u.balance || 0,
-				u.planId || null,
-				u.planName || null,
-				u.cycleEnd || null,
-				u.shopifyCustomerId || null,
-			],
-		)
-	} catch (e) {
-		console.warn('⚠️  Failed to upsert user:', email, e.message)
-	}
-}
-
-;(async () => {
-	const usingDb = await initDatabaseIfConfigured()
-	if (!usingDb) loadStoreFromDisk()
-})()
+attachDatabasePool(pool)
 
 // Middleware to capture raw body for webhook verification
 app.use('/v1/webhooks/shopify', express.raw({ type: 'application/json' }))
@@ -182,8 +69,8 @@ app.get('/', (req, res) => {
 	})
 })
 
-// Shopify webhook handler
-app.post('/v1/webhooks/shopify', (req, res) => {
+app.post('/v1/webhooks/shopify', async (req, res) => {
+	// TODO: Insert customer from Appstle webhook
 	const topic = req.headers['x-shopify-topic']
 	const signature = req.headers['x-shopify-hmac-sha256']
 	const webhookId = req.headers['x-shopify-webhook-id']
@@ -194,12 +81,6 @@ app.post('/v1/webhooks/shopify', (req, res) => {
 	console.log(`🏪 Shop: ${shop}`)
 	console.log(`🔐 Signature: ${signature ? 'Present' : 'Missing'}`)
 	console.log(`📦 Body size: ${req.body.length} bytes`)
-
-	// Idempotency
-	if (webhookId && processedWebhookIds.has(webhookId)) {
-		console.log('🟡 Duplicate webhook ignored:', webhookId)
-		return res.status(200).json({ duplicate: true })
-	}
 
 	// Verify HMAC if secret provided
 	try {
@@ -262,7 +143,7 @@ app.post('/v1/webhooks/shopify', (req, res) => {
 
 			// Minimal credit grant by selling plan
 			const email = order.customer?.email
-			const customerId = String(order.customer?.id || '')
+			const customerId = String(order.customer?.id)
 			const planId = String(
 				subscriptionItems[0]?.selling_plan_allocation?.selling_plan
 					?.id || '',
@@ -278,30 +159,16 @@ app.post('/v1/webhooks/shopify', (req, res) => {
 			}
 			const credits = planCredits[planId] || 1000
 			if (email) {
-				const prev = usersByEmail.get(email) || {
-					balance: 0,
-					planId: planId,
-					planName: planId,
-					cycleEnd: new Date(
-						Date.now() + 30 * 24 * 60 * 60 * 1000,
-					).toISOString(),
-					shopifyCustomerId: customerId,
-				}
+				const prev = getUser(email)
 				const cycleEnd = new Date(
 					Date.now() + 30 * 24 * 60 * 60 * 1000,
 				).toISOString()
-				usersByEmail.set(email, {
-					balance: (prev.balance || 0) + credits,
-					planId,
-					planName: planId,
-					cycleEnd,
-					shopifyCustomerId: customerId,
-				})
-				console.log(
-					`💰 Granted ${credits} credits to ${email} (plan ${planId}). New balance: ${usersByEmail.get(email).balance}`,
-				)
-				if (pgPool) upsertUserToDb(email)
-				else scheduleSave()
+				// await updateUser(email)
+				// console.log(
+				// 	`💰 Granted ${credits} credits to ${email} (plan ${planId}). New balance: ${
+				// 		usersByEmail.get(email).balance
+				// 	}`,
+				// )
 			}
 		}
 
@@ -340,9 +207,6 @@ app.post('/v1/webhooks/shopify', (req, res) => {
 		console.error('❌ Error parsing webhook body:', error.message)
 	}
 
-	console.log('\n' + '='.repeat(60) + '\n')
-
-	if (webhookId) processedWebhookIds.add(webhookId)
 	res.status(200).json({
 		received: true,
 		topic: topic,
@@ -350,12 +214,10 @@ app.post('/v1/webhooks/shopify', (req, res) => {
 	})
 })
 
-// Health check endpoint
 app.get('/health', (req, res) => {
 	res.json({ status: 'healthy', timestamp: new Date().toISOString() })
 })
 
-// Helper function to get credits for SKU
 function getCreditsForSku(sku) {
 	const skuCredits = {
 		'AUTOVFX-CREATOR': 1000,
@@ -426,8 +288,7 @@ function verifyToken(token) {
 	}
 }
 
-// POST /v1/auth { email }
-app.post('/v1/auth', (req, res) => {
+app.post('/v1/auth', async (req, res) => {
 	const email = String(req.body?.email || '')
 		.trim()
 		.toLowerCase()
@@ -437,29 +298,17 @@ app.post('/v1/auth', (req, res) => {
 			.json({ error: 'Email required', message: 'Email required' })
 	}
 
-	let user = usersByEmail.get(email)
-
-	// Auto-create user on first sign-in with zero credits (activates after purchase)
+	const user = getUser(email)
 	if (!user) {
-		user = {
-			balance: 0,
-			planId: 'none',
-			planName: 'none',
-			cycleEnd: null,
-			shopifyCustomerId: null,
-		}
-		usersByEmail.set(email, user)
-		console.log(
-			`👤 Created new user record for ${email} (0 credits, pending subscription).`,
-		)
-		if (pgPool) upsertUserToDb(email)
-		else scheduleSave()
+		return res.status(400).json({
+			error: 'User does not exist',
+			message: 'User does not exist',
+		})
 	}
-
 	const expires =
 		Number((process.env.JWT_EXPIRES_IN || '').replace('d', '')) || 7
 	const token = signToken({ email }, expires * 24 * 3600)
-
+	// TODO: Check how these keys are used
 	return res.json({
 		token,
 		user: { email },
@@ -485,129 +334,74 @@ function requireAuth(req, res, next) {
 }
 
 app.get('/v1/me', requireAuth, async (req, res) => {
-	try {
-		let user = usersByEmail.get(req.email) || { balance: 0 }
-
-		// If Postgres is available, prefer fresh data from DB
-		if (pgPool) {
-			const result = await pgPool.query(
-				'SELECT balance, plan_id, plan_name, cycle_end FROM users WHERE email = $1',
-				[req.email],
-			)
-			if (result.rows.length > 0) {
-				const dbUser = result.rows[0]
-				user = {
-					balance: dbUser.balance || 0,
-					planId: dbUser.plan_id || user.planId || 'none',
-					planName: dbUser.plan_name || user.planName || 'none',
-					cycleEnd: dbUser.cycle_end || user.cycleEnd || null,
-				}
-				// Update memory cache to keep things consistent
-				usersByEmail.set(req.email, {
-					...(usersByEmail.get(req.email) || {}),
-					...user,
-				})
-			}
-		}
-
-		res.json({
-			user: { email: req.email },
-			balance: user.balance,
-			subscription: {
-				status:
-					user.planId && user.planId !== 'none' ? 'active' : 'none',
-				selling_plan_id: user.planId,
-			},
-			cycle: { end: user.cycleEnd },
-		})
-	} catch (error) {
-		console.error('GET /v1/me error:', error)
-		const user = usersByEmail.get(req.email) || { balance: 0 }
-		res.json({
-			user: { email: req.email },
-			balance: user.balance,
-			subscription: { status: 'active', selling_plan_id: user.planId },
-			cycle: { end: user.cycleEnd },
+	const user = getUser(req.email)
+	if (!user) {
+		return res.status(400).json({
+			error: 'User does not exist',
+			message: 'User does not exist',
 		})
 	}
+	// TODO: Check how these keys are used
+	res.json({
+		user: { email: req.email },
+		balance: user.balance,
+		subscription: {
+			status: user.planId && user.planId !== 'none' ? 'active' : 'none',
+			selling_plan_id: user.planId,
+		},
+		cycle: { end: user.cycleEnd },
+	})
 })
 
-// GET /v1/credits
 app.get('/v1/credits', requireAuth, async (req, res) => {
-	try {
-		let user = usersByEmail.get(req.email) || { balance: 0 }
-
-		// If Postgres is available, get fresh data
-		if (pgPool) {
-			const result = await pgPool.query(
-				'SELECT balance, cycle_end FROM users WHERE email = $1',
-				[req.email],
-			)
-			if (result.rows.length > 0) {
-				const dbUser = result.rows[0]
-				user = {
-					balance: dbUser.balance || 0,
-					cycleEnd: dbUser.cycle_end,
-				}
-				// Update memory cache
-				usersByEmail.set(req.email, {
-					...usersByEmail.get(req.email),
-					...user,
-				})
-			}
-		}
-
-		res.json({ balance: user.balance, cycle: { end: user.cycleEnd } })
-	} catch (error) {
-		console.error('Credits error:', error)
-		const user = usersByEmail.get(req.email) || { balance: 0 }
-		res.json({ balance: user.balance, cycle: { end: user.cycleEnd } })
+	const user = getUser(req.email)
+	if (!user) {
+		return res.status(400).json({
+			error: 'User does not exist',
+			message: 'User does not exist',
+		})
 	}
+	// TODO: Check how these keys are used
+	res.json({ balance: user.balance, cycle: { end: user.cycleEnd } })
 })
 
-// POST /v1/enhance { prompt }
-// Uses server-side OpenAI API key so end-users don't need to configure a client key
 app.post('/v1/enhance', async (req, res) => {
 	try {
 		const prompt = String(req.body?.prompt || '').trim()
-		if (!prompt) return res.status(400).json({ error: 'Prompt required' })
-
-		const apiKey = process.env.OPENAI_API_KEY || ''
-		if (!apiKey) {
-			return res
-				.status(501)
-				.json({ error: 'Server is not configured with OPENAI_API_KEY' })
+		if (!prompt) {
+			return res.status(400).json({ error: 'Prompt required' })
 		}
-
-		const baseUrl =
-			process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-		const model = process.env.OPENAI_MODEL || 'gpt-4o'
-
-		const systemPrompt = `You are a professional video editing prompt enhancer specializing in Runway ML's Gen-4 Aleph model. Enhance user prompts following these rules:
-1) Start with an action verb (add, remove, change, replace, re-light, re-style)
-2) Be specific about the transformation
-3) ALWAYS include explicit preservation instructions for existing scene elements
-4) Keep prompts concise (20–35 words)
-MANDATORY: Explicitly state that all other elements remain unchanged/preserved.`
-
-		const response = await fetch(`${baseUrl}/chat/completions`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				'Content-Type': 'application/json',
+		const response = await fetch(
+			`${process.env.OPENAI_BASE_URL}/chat/completions`,
+			{
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: process.env.OPENAI_MODEL,
+					messages: [
+						{
+							role: 'system',
+							content: [
+								"You are a professional video editing prompt enhancer specializing in Runway ML's Gen-4 Aleph model. Enhance user prompts following these rules:",
+								'1) Start with an action verb (add, remove, change, replace, re-light, re-style)',
+								'2) Be specific about the transformation',
+								'3) ALWAYS include explicit preservation instructions for existing scene elements',
+								'4) Keep prompts concise (20-35 words)',
+								'MANDATORY: Explicitly state that all other elements remain unchanged/preserved.',
+							].join('\n'),
+						},
+						{
+							role: 'user',
+							content: `Enhance this prompt for Runway ML video generation: "${prompt}"`,
+						},
+					],
+					max_completion_tokens: 300,
+				}),
 			},
-			body: JSON.stringify({
-				model,
-				messages: [
-					{ role: 'system', content: systemPrompt },
-					{
-						role: 'user',
-						content: `Enhance this prompt for Runway ML video generation: "${prompt}"`,
-					},
-				],
-				max_completion_tokens: 300,
-			}),
-		})
+		)
 
 		if (!response.ok) {
 			const err = await response.json().catch(() => ({}))
@@ -632,46 +426,46 @@ MANDATORY: Explicitly state that all other elements remain unchanged/preserved.`
 	}
 })
 
-// POST /v1/jobs { requestedSeconds }
-app.post('/v1/jobs', requireAuth, (req, res) => {
+app.post('/v1/jobs', requireAuth, async (req, res) => {
 	const requestedSeconds = Math.max(
 		0,
 		Number(req.body?.requestedSeconds || 0),
 	)
-	const creditsPerSecond = Number(process.env.CREDITS_PER_SECOND || 15)
+	const creditsPerSecond = Number(process.env.CREDITS_PER_SECOND)
+	// TODO: Check how fractional second credits are calculated by Runway
 	// Bill to nearest whole second (minimum 1s) to match UX expectation (e.g., 3.10s -> 3s)
 	const billableSeconds = Math.max(1, Math.round(requestedSeconds))
 	const needed = billableSeconds * creditsPerSecond
+	const user = getUser(req.email)
+	const balance = user.balance
 	if (balance < needed) {
 		return res
 			.status(402)
 			.json({ error: 'Insufficient credits', needed, balance })
 	}
+	await updateBalance(req.email, balance - needed)
+	console.log(
+		`🧮 Credit reservation: requestedSeconds=${requestedSeconds}s, billableSeconds=${billableSeconds}s, creditsPerSecond=${creditsPerSecond}, needed=${needed}`,
+	)
 	res.json({ taskId: `task_${Date.now()}`, reservedCredits: needed })
 })
 
-// POST /v1/portal-link -> returns Apstle manage link
 app.post('/v1/portal-link', requireAuth, async (req, res) => {
+	// TODO: Rewrite this to work with Appstle webhooks
 	try {
-		const user = usersByEmail.get(req.email)
+		const user = getUser(req.email)
 		if (!user || !user.shopifyCustomerId) {
 			return res.status(400).json({
-			return res
-				.status(400)
-				.json({
-					error: 'Missing customer ID. Make a first purchase to link your account.',
-				})
+				// TODO: Is this message used in the extension?
 				error: 'Missing customer ID. Make a first purchase to link your account.',
 			})
 		}
-		const base =
-			process.env.APSTLE_API_BASE ||
-			'https://subscription-admin.appstle.com/api/external/v2'
-		const key = process.env.APSTLE_API_KEY || ''
+		// TODO: Verify this url is the same in the env 'https://subscription-admin.appstle.com/api/external/v2'
+		// TODO: Shopify customer id is currently not set
 		const resp = await fetch(
-			`${base}/manage-subscription-link/${user.shopifyCustomerId}`,
+			`${process.env.APSTLE_API_BASE}/manage-subscription-link/${user.shopifyCustomerId}`,
 			{
-				headers: { 'X-Apstle-Api-Key': key },
+				headers: { 'X-Apstle-Api-Key': process.env.APSTLE_API_KEY },
 			},
 		)
 		if (!resp.ok) {
@@ -691,65 +485,6 @@ app.post('/v1/portal-link', requireAuth, async (req, res) => {
 	}
 })
 
-// --- DEV UTILS: simulate Shopify orders/paid to grant credits ---
-// Enabled only when NODE_ENV !== 'production'
-// POST /v1/dev/mock-orders-paid { email, sellingPlanId?, sku? }
-if (process.env.NODE_ENV !== 'production')
-	app.post('/v1/dev/mock-orders-paid', (req, res) => {
-		const email = String(req.body?.email || '')
-			.trim()
-			.toLowerCase()
-		const sellingPlanId = req.body?.sellingPlanId
-			? String(req.body.sellingPlanId)
-			: null
-		const sku = req.body?.sku ? String(req.body.sku) : null
-		if (!email) return res.status(400).json({ error: 'Email required' })
-
-		let credits = 0
-		if (sellingPlanId) {
-			const planCredits = {
-				[process.env.SELLING_PLAN_TIER1 || '690384601430']: 3000,
-				[process.env.SELLING_PLAN_TIER2 || '690385518934']: 7500,
-				[process.env.SELLING_PLAN_TIER3 || '690385551702']: 24000,
-			}
-			credits = planCredits[sellingPlanId] || 1000
-		} else if (sku) {
-			credits = getCreditsForSku(sku)
-		} else {
-			return res
-				.status(400)
-				.json({ error: 'Provide sellingPlanId or sku' })
-		}
-
-		const prev = usersByEmail.get(email) || {
-			balance: 0,
-			planId: 'none',
-			planName: 'none',
-			cycleEnd: null,
-			shopifyCustomerId: null,
-		}
-		const cycleEnd = new Date(
-			Date.now() + 30 * 24 * 60 * 60 * 1000,
-		).toISOString()
-		const planId = sellingPlanId || prev.planId || 'none'
-		usersByEmail.set(email, {
-			balance: (prev.balance || 0) + credits,
-			planId,
-			planName: planId,
-			cycleEnd,
-			shopifyCustomerId: prev.shopifyCustomerId,
-		})
-		if (pgPool) upsertUserToDb(email)
-		else scheduleSave()
-		return res.json({
-			email,
-			granted: credits,
-			balance: usersByEmail.get(email).balance,
-			cycleEnd,
-		})
-	})
-
-// POST /v1/checkout/topup { pack }
 app.post('/v1/checkout/topup', requireAuth, (req, res) => {
 	const pack = String(req.body?.pack || 'credits_1000')
 	const urls = {
@@ -762,9 +497,6 @@ app.post('/v1/checkout/topup', requireAuth, (req, res) => {
 	res.json({ url })
 })
 
-// Export app for serverless platforms (Vercel) and start locally only if RUN_LOCAL=true
-module.exports = app
-
 if (process.env.RUN_LOCAL === 'true') {
 	const PORT = process.env.PORT || 3000
 	app.listen(PORT, () => {
@@ -774,8 +506,108 @@ if (process.env.RUN_LOCAL === 'true') {
 	})
 }
 
+async function getUser(email) {
+	const db = await pool.connect()
+	const result = await db.query('SELECT * FROM users WHERE email = $1', [
+		email,
+	])
+	return result.rows[0]
+}
+
+async function updateBalance(email, balance) {
+	const db = await pool.connect()
+	await db.query(`UPDATE users SET balance = $1 WHERE email = $2`, [
+		balance,
+		email,
+	])
+}
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
 	console.log('\n👋 Shutting down webhook server...')
 	process.exit(0)
 })
+
+function verifyEnvVariables() {
+	const variables = [
+		'DATABASE_URL',
+		'RATE_LIMIT_WINDOW_MS',
+		'RATE_LIMIT_MAX_REQUESTS',
+		'SHOPIFY_WEBHOOK_SECRET',
+		'SELLING_PLAN_TIER1',
+		'SELLING_PLAN_TIER2',
+		'SELLING_PLAN_TIER3',
+		'JWT_SECRET',
+		'JWT_EXPIRES_IN',
+		'OPENAI_API_KEY',
+		'OPENAI_BASE_URL',
+		'OPENAI_MODEL',
+		'CREDITS_PER_SECOND',
+		'APSTLE_API_BASE',
+		'APSTLE_API_KEY',
+	]
+	const missing = variables.filter((variable) => process.env[variable])
+	if (missing.length) {
+		throw new Error(`Missing env variables ${missing.join(', ')}`)
+	}
+}
+
+// --- DEV UTILS: simulate Shopify orders/paid to grant credits ---
+// Enabled only when NODE_ENV !== 'production'
+// POST /v1/dev/mock-orders-paid { email, sellingPlanId?, sku? }
+// if (process.env.NODE_ENV !== 'production')
+// 	app.post('/v1/dev/mock-orders-paid', async (req, res) => {
+// 		const email = String(req.body?.email || '')
+// 			.trim()
+// 			.toLowerCase()
+// 		const sellingPlanId = req.body?.sellingPlanId
+// 			? String(req.body.sellingPlanId)
+// 			: null
+// 		const sku = req.body?.sku ? String(req.body.sku) : null
+// 		if (!email) {
+// 			return res.status(400).json({ error: 'Email required' })
+// 		}
+
+// 		let credits = 0
+// 		if (sellingPlanId) {
+// 			const planCredits = {
+// 				[process.env.SELLING_PLAN_TIER1 || '690384601430']: 3000,
+// 				[process.env.SELLING_PLAN_TIER2 || '690385518934']: 7500,
+// 				[process.env.SELLING_PLAN_TIER3 || '690385551702']: 24000,
+// 			}
+// 			credits = planCredits[sellingPlanId] || 1000
+// 		} else if (sku) {
+// 			credits = getCreditsForSku(sku)
+// 		} else {
+// 			return res.status(400).json({ error: 'Provide sellingPlanId or sku' })
+// 		}
+
+// 		const prev = usersByEmail.get(email) || {
+// 			balance: 0,
+// 			planId: 'none',
+// 			planName: 'none',
+// 			cycleEnd: null,
+// 			shopifyCustomerId: null,
+// 		}
+// 		const cycleEnd = new Date(
+// 			Date.now() + 30 * 24 * 60 * 60 * 1000,
+// 		).toISOString()
+// 		const planId = sellingPlanId || prev.planId || 'none'
+// 		usersByEmail.set(email, {
+// 			balance: (prev.balance || 0) + credits,
+// 			planId,
+// 			planName: planId,
+// 			cycleEnd,
+// 			shopifyCustomerId: prev.shopifyCustomerId,
+// 		})
+// 		await updateUser(email)
+// 		return res.json({
+// 			email,
+// 			granted: credits,
+// 			balance: usersByEmail.get(email).balance,
+// 			cycleEnd,
+// 		})
+// 	})
+
+// Export app for serverless platforms (Vercel) and start locally only if RUN_LOCAL=true
+module.exports = app
