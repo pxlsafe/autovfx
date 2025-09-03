@@ -144,11 +144,14 @@ app.use((req, res, next) => {
 		req.socket.remoteAddress ||
 		'local'
 	let entry = rateMap.get(ip) || { count: 0, reset: now + WINDOW_MS }
-	if (now > entry.reset) entry = { count: 0, reset: now + WINDOW_MS }
+	if (now > entry.reset) {
+		entry = { count: 0, reset: now + WINDOW_MS }
+	}
 	entry.count += 1
 	rateMap.set(ip, entry)
-	if (entry.count > MAX_REQ)
+	if (entry.count > MAX_REQ) {
 		return res.status(429).json({ error: 'Too many requests' })
+	}
 	next()
 })
 
@@ -165,7 +168,9 @@ app.use((req, res, next) => {
 		'GET, POST, PUT, DELETE, OPTIONS',
 	)
 	res.header('Access-Control-Allow-Credentials', 'true')
-	if (req.method === 'OPTIONS') return res.sendStatus(200)
+	if (req.method === 'OPTIONS') {
+		return res.sendStatus(200)
+	}
 	next()
 })
 
@@ -371,11 +376,14 @@ function base64url(input) {
 		.replace(/\+/g, '-')
 		.replace(/\//g, '_')
 }
+
 function signToken(payload, expiresInSec = 7 * 24 * 3600) {
 	const header = { alg: 'HS256', typ: 'JWT' }
 	const exp = Math.floor(Date.now() / 1000) + expiresInSec
 	const body = { ...payload, exp }
-	const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(body))}`
+	const unsigned = `${base64url(JSON.stringify(header))}.${base64url(
+		JSON.stringify(body),
+	)}`
 	const sig = crypto
 		.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
 		.update(unsigned)
@@ -385,9 +393,12 @@ function signToken(payload, expiresInSec = 7 * 24 * 3600) {
 		.replace(/\//g, '_')
 	return `${unsigned}.${sig}`
 }
+
 function verifyToken(token) {
 	const parts = token.split('.')
-	if (parts.length !== 3) return null
+	if (parts.length !== 3) {
+		return null
+	}
 	const [h, p, s] = parts
 	const expected = crypto
 		.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
@@ -396,7 +407,9 @@ function verifyToken(token) {
 		.replace(/=/g, '')
 		.replace(/\+/g, '-')
 		.replace(/\//g, '_')
-	if (s !== expected) return null
+	if (s !== expected) {
+		return null
+	}
 	try {
 		const payload = JSON.parse(
 			Buffer.from(
@@ -404,8 +417,9 @@ function verifyToken(token) {
 				'base64',
 			).toString('utf8'),
 		)
-		if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp)
+		if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
 			return null
+		}
 		return payload
 	} catch (_) {
 		return null
@@ -417,10 +431,11 @@ app.post('/v1/auth', (req, res) => {
 	const email = String(req.body?.email || '')
 		.trim()
 		.toLowerCase()
-	if (!email)
+	if (!email) {
 		return res
 			.status(400)
 			.json({ error: 'Email required', message: 'Email required' })
+	}
 
 	let user = usersByEmail.get(email)
 
@@ -462,12 +477,13 @@ function requireAuth(req, res, next) {
 	const auth = req.headers.authorization || ''
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
 	const payload = verifyToken(token)
-	if (!payload?.email) return res.status(401).json({ error: 'Unauthorized' })
+	if (!payload?.email) {
+		return res.status(401).json({ error: 'Unauthorized' })
+	}
 	req.email = String(payload.email).toLowerCase()
 	next()
 }
 
-// GET /v1/me
 app.get('/v1/me', requireAuth, async (req, res) => {
 	try {
 		let user = usersByEmail.get(req.email) || { balance: 0 }
@@ -595,20 +611,18 @@ MANDATORY: Explicitly state that all other elements remain unchanged/preserved.`
 
 		if (!response.ok) {
 			const err = await response.json().catch(() => ({}))
-			return res
-				.status(500)
-				.json({
-					error: `OpenAI error: ${response.status}`,
-					detail: err.error?.message || null,
-				})
+			return res.status(500).json({
+				error: `OpenAI error: ${response.status}`,
+				detail: err.error?.message || null,
+			})
 		}
 		const data = await response.json()
 		const enhanced = (data.choices?.[0]?.message?.content || '')
 			.trim()
 			.replace(/^(["'])(.*)\1$/, '$2')
-		if (!enhanced)
+		if (!enhanced) {
 			return res.status(500).json({ error: 'Empty response from OpenAI' })
-
+		}
 		return res.json({ success: true, original: prompt, enhanced })
 	} catch (e) {
 		console.error('Enhance error:', e)
@@ -628,22 +642,11 @@ app.post('/v1/jobs', requireAuth, (req, res) => {
 	// Bill to nearest whole second (minimum 1s) to match UX expectation (e.g., 3.10s -> 3s)
 	const billableSeconds = Math.max(1, Math.round(requestedSeconds))
 	const needed = billableSeconds * creditsPerSecond
-	console.log(
-		`\n🧮 Credit reservation: requestedSeconds=${requestedSeconds.toFixed(3)}s, billableSeconds=${billableSeconds}s, creditsPerSecond=${creditsPerSecond}, needed=${needed}`,
-	)
-	const user = usersByEmail.get(req.email) || { balance: 0 }
-	if (user.balance < needed)
+	if (balance < needed) {
 		return res
 			.status(402)
-			.json({
-				error: 'Insufficient credits',
-				needed,
-				balance: user.balance,
-			})
-	user.balance -= needed
-	usersByEmail.set(req.email, user)
-	if (pgPool) upsertUserToDb(req.email)
-	else scheduleSave()
+			.json({ error: 'Insufficient credits', needed, balance })
+	}
 	res.json({ taskId: `task_${Date.now()}`, reservedCredits: needed })
 })
 
@@ -652,11 +655,14 @@ app.post('/v1/portal-link', requireAuth, async (req, res) => {
 	try {
 		const user = usersByEmail.get(req.email)
 		if (!user || !user.shopifyCustomerId) {
+			return res.status(400).json({
 			return res
 				.status(400)
 				.json({
 					error: 'Missing customer ID. Make a first purchase to link your account.',
 				})
+				error: 'Missing customer ID. Make a first purchase to link your account.',
+			})
 		}
 		const base =
 			process.env.APSTLE_API_BASE ||
