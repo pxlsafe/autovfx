@@ -5,11 +5,21 @@ import express from 'express'
 import { Pool } from 'pg'
 import { config } from 'dotenv'
 import { attachDatabasePool } from '@vercel/functions'
+import RunwayML, { TaskFailedError } from '@runwayml/sdk'
+import {
+	calculateCredits,
+	getPercentageUsed,
+	requireAuth,
+	signToken,
+	verifyEnvVariables,
+} from './utils.js'
+import Status from 'http-status-codes'
 
-config()
+config({ path: '../.env.local' })
 verifyEnvVariables()
 
 const app = express()
+const runway = new RunwayML()
 const pool = new Pool({
 	connectionString: process.env.DATABASE_URL,
 	connectionTimeoutMillis: 5000,
@@ -19,12 +29,12 @@ attachDatabasePool(pool)
 
 // Middleware to capture raw body for webhook verification
 app.use('/v1/webhooks/shopify', express.raw({ type: 'application/json' }))
-app.use(express.json())
+app.use(express.json({ limit: '50mb' }))
 
 // Basic rate limiting (per IP)
 const rateMap = new Map()
-const WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000)
-const MAX_REQ = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 100)
+const WINDOW_MS = Number(15 * 60 * 1000)
+const MAX_REQ = Number(100)
 app.use((req, res, next) => {
 	const now = Date.now()
 	const ip =
@@ -38,7 +48,9 @@ app.use((req, res, next) => {
 	entry.count += 1
 	rateMap.set(ip, entry)
 	if (entry.count > MAX_REQ) {
-		return res.status(429).json({ error: 'Too many requests' })
+		return res
+			.status(Status.TOO_MANY_REQUESTS)
+			.json({ error: 'Too many requests' })
 	}
 	next()
 })
@@ -57,7 +69,7 @@ app.use((req, res, next) => {
 	)
 	res.header('Access-Control-Allow-Credentials', 'true')
 	if (req.method === 'OPTIONS') {
-		return res.sendStatus(200)
+		return res.sendStatus(Status.OK)
 	}
 	next()
 })
@@ -70,6 +82,10 @@ app.get('/', (req, res) => {
 	})
 })
 
+app.get('/health', (req, res) => {
+	res.json({ status: 'healthy', timestamp: new Date().toISOString() })
+})
+
 app.post('/v1/webhooks/shopify', async (req, res) => {
 	// TODO: Insert customer from Appstle webhook
 	const topic = req.headers['x-shopify-topic']
@@ -77,11 +93,26 @@ app.post('/v1/webhooks/shopify', async (req, res) => {
 	const webhookId = req.headers['x-shopify-webhook-id']
 	const shop = req.headers['x-shopify-shop-domain']
 
-	console.log('\n🔔 WEBHOOK RECEIVED:')
+	console.log('🔔 WEBHOOK RECEIVED:')
 	console.log(`📋 Topic: ${topic}`)
 	console.log(`🏪 Shop: ${shop}`)
 	console.log(`🔐 Signature: ${signature ? 'Present' : 'Missing'}`)
 	console.log(`📦 Body size: ${req.body.length} bytes`)
+
+	// TODO: Use shopify library
+	// https://github.com/Shopify/shopify-app-js/blob/main/packages/apps/shopify-api/docs/reference/webhooks/validate.md
+	// const { valid, topic, domain } = await shopify.webhooks.validate({
+	// 	rawBody: req.body, // is a string
+	// 	rawRequest: req,
+	// 	rawResponse: res,
+	// })
+
+	// if (!valid) {
+	// 	// This is not a valid request!
+	// 	res.send(400) // Bad Request
+	// }
+
+	// // Run my webhook-processing code here
 
 	// Verify HMAC if secret provided
 	try {
@@ -92,285 +123,110 @@ app.post('/v1/webhooks/shopify', async (req, res) => {
 				.digest('base64')
 			if (hmac !== signature) {
 				console.log('❌ HMAC verification failed')
-				return res.status(401).send('Invalid signature')
+				return res.status(Status.UNAUTHORIZED).send('Invalid signature')
 			}
-		} else {
-			console.log(
-				'ℹ️ No SHOPIFY_WEBHOOK_SECRET set; skipping HMAC check (dev mode).',
-			)
 		}
 	} catch (e) {
 		console.log('❌ HMAC verification error:', e.message)
-		return res.status(400).send('Bad request')
+		return res.status(Status.BAD_REQUEST).send('Bad request')
 	}
 
-	try {
-		const order = JSON.parse(req.body)
-		console.log(`\n📄 Order Details:`)
-		console.log(`- Order ID: ${order.id}`)
-		console.log(`- Customer: ${order.customer?.email || 'No customer'}`)
-		console.log(`- Total: ${order.total_price} ${order.currency}`)
-		console.log(`- Items: ${order.line_items?.length || 0}`)
-
-		// Check for subscription items
-		const subscriptionItems =
-			order.line_items?.filter(
-				(item) => item.selling_plan_allocation !== null,
-			) || []
-
-		// Check for top-up items
-		const topupItems =
-			order.line_items?.filter(
-				(item) =>
-					item.sku &&
-					(item.sku.includes('TOPUP') || item.sku.includes('CREDIT')),
-			) || []
-
-		// Check for AutoVFX subscription items (temporary detection)
-		const autovfxItems =
-			order.line_items?.filter(
-				(item) => item.sku && item.sku.includes('AUTOVFX'),
-			) || []
-
-		if (subscriptionItems.length > 0) {
-			console.log(`\n🔄 SUBSCRIPTION ITEMS FOUND:`)
-			subscriptionItems.forEach((item) => {
-				console.log(`- ${item.title}`)
-				console.log(
-					`  Selling Plan ID: ${item.selling_plan_allocation?.selling_plan?.id}`,
-				)
-				console.log(`  Price: ${item.price}`)
-			})
-
-			// Minimal credit grant by selling plan
-			const email = order.customer?.email
-			const customerId = String(order.customer?.id)
-			const planId = String(
-				subscriptionItems[0]?.selling_plan_allocation?.selling_plan
-					?.id || '',
-			)
-			// Runway pricing: 15 credits per second
-			// $10 = 40 videos x 5sec = 200sec = 3000 credits
-			// $25 = 100 videos x 5sec = 500sec = 7500 credits
-			// $80 = 320 videos x 5sec = 1600sec = 24000 credits
-			const planCredits = {
-				[process.env.SELLING_PLAN_TIER1 || '690384601430']: 3000, // $49 plan → $10 runway cost
-				[process.env.SELLING_PLAN_TIER2 || '690385518934']: 7500, // $79 plan → $25 runway cost
-				[process.env.SELLING_PLAN_TIER3 || '690385551702']: 24000, // $199 plan → $80 runway cost
-			}
-			const credits = planCredits[planId] || 1000
-			if (email) {
-				const prev = getUser(email)
-				const cycleEnd = new Date(
-					Date.now() + 30 * 24 * 60 * 60 * 1000,
-				).toISOString()
-				// await updateUser(email)
-				// console.log(
-				// 	`💰 Granted ${credits} credits to ${email} (plan ${planId}). New balance: ${
-				// 		usersByEmail.get(email).balance
-				// 	}`,
-				// )
-			}
-		}
-
-		if (topupItems.length > 0) {
-			console.log(`\n💰 TOP-UP ITEMS FOUND:`)
-			topupItems.forEach((item) => {
-				console.log(`- ${item.title}`)
-				console.log(`  SKU: ${item.sku}`)
-				console.log(`  Price: ${item.price}`)
-			})
-		}
-
-		if (autovfxItems.length > 0) {
-			console.log(`\n🎯 AUTOVFX SUBSCRIPTION ITEMS:`)
-			autovfxItems.forEach((item) => {
-				console.log(`- ${item.title}`)
-				console.log(`  SKU: ${item.sku}`)
-				console.log(`  Price: ${item.price}`)
-			})
-
-			// TODO: In production, this would create user and grant credits
-			console.log(`\n📧 WOULD CREATE USER:`)
-			console.log(`- Email: ${order.customer?.email}`)
-			console.log(`- Shopify ID: ${order.customer?.id}`)
-			console.log(`- Credits: ${getCreditsForSku(autovfxItems[0].sku)}`)
-		}
-
-		if (
-			subscriptionItems.length === 0 &&
-			topupItems.length === 0 &&
-			autovfxItems.length === 0
-		) {
-			console.log(`\n ℹ️  No subscription or top-up items found`)
-		}
-	} catch (error) {
-		console.error('❌ Error parsing webhook body:', error.message)
-	}
-
-	res.status(200).json({
+	res.status(Status.OK).json({
 		received: true,
 		topic: topic,
 		timestamp: new Date().toISOString(),
 	})
 })
 
-app.get('/health', (req, res) => {
-	res.json({ status: 'healthy', timestamp: new Date().toISOString() })
-})
-
-function getCreditsForSku(sku) {
-	const skuCredits = {
-		'AUTOVFX-CREATOR': 1000,
-		'AUTOVFX-STUDIO': 2500,
-		'AUTOVFX-PRO': 8000,
-	}
-	return skuCredits[sku] || 1000
-}
-
-// --- Minimal auth + credit endpoints for the panel ---
-app.use(express.json())
-
-// Minimal JWT (HS256)
-function base64url(input) {
-	return Buffer.from(input)
-		.toString('base64')
-		.replace(/=/g, '')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-}
-
-function signToken(payload, expiresInSec = 7 * 24 * 3600) {
-	const header = { alg: 'HS256', typ: 'JWT' }
-	const exp = Math.floor(Date.now() / 1000) + expiresInSec
-	const body = { ...payload, exp }
-	const unsigned = `${base64url(JSON.stringify(header))}.${base64url(
-		JSON.stringify(body),
-	)}`
-	const sig = crypto
-		.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
-		.update(unsigned)
-		.digest('base64')
-		.replace(/=/g, '')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-	return `${unsigned}.${sig}`
-}
-
-function verifyToken(token) {
-	const parts = token.split('.')
-	if (parts.length !== 3) {
-		return null
-	}
-	const [h, p, s] = parts
-	const expected = crypto
-		.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
-		.update(`${h}.${p}`)
-		.digest('base64')
-		.replace(/=/g, '')
-		.replace(/\+/g, '-')
-		.replace(/\//g, '_')
-	if (s !== expected) {
-		return null
-	}
-	try {
-		const payload = JSON.parse(
-			Buffer.from(
-				p.replace(/-/g, '+').replace(/_/g, '/'),
-				'base64',
-			).toString('utf8'),
-		)
-		if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
-			return null
-		}
-		return payload
-	} catch (_) {
-		return null
-	}
-}
-
 app.post('/v1/auth', async (req, res) => {
-	const email = String(req.body?.email || '')
-		.trim()
-		.toLowerCase()
-	if (!email) {
-		return res
-			.status(400)
-			.json({ error: 'Email required', message: 'Email required' })
-	}
+	try {
+		const email = String(req.body?.email || '')
+			.trim()
+			.toLowerCase()
+		if (!email) {
+			return res
+				.status(Status.BAD_REQUEST)
+				.json({ error: 'Email required', message: 'Email required' })
+		}
 
-	const user = getUser(email)
-	if (!user) {
-		return res.status(400).json({
-			error: 'User does not exist',
-			message: 'User does not exist',
+		const user = await getUser(email)
+		if (!user) {
+			return res.status(Status.BAD_REQUEST).json({
+				error: 'User does not exist',
+				message: 'User does not exist',
+			})
+		}
+		const token = signToken({ email }, 7 * 24 * 3600)
+
+		return res.json({
+			token,
+			user: { email },
+			subscription: {
+				name: user.plan_name,
+				status: user.plan_id !== 'none' ? 'none' : 'active',
+				selling_plan_id: user.plan_id,
+				used: getPercentageUsed(user.plan_name, user.balance),
+			},
+			balance: user.balance,
+			cycle: { end: user.cycle_end },
+			needsSubscription: user._plan_id === 'none',
 		})
+	} catch (error) {
+		console.error(error)
+		return res
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: 'Internal Server Error' })
 	}
-	const expires =
-		Number((process.env.JWT_EXPIRES_IN || '').replace('d', '')) || 7
-	const token = signToken({ email }, expires * 24 * 3600)
-	// TODO: Check how these keys are used
-	return res.json({
-		token,
-		user: { email },
-		subscription: {
-			status: user.planId === 'none' ? 'none' : 'active',
-			selling_plan_id: user.planId,
-		},
-		balance: user.balance,
-		cycle: { end: user.cycleEnd },
-		needsSubscription: user.planId === 'none',
-	})
 })
-
-function requireAuth(req, res, next) {
-	const auth = req.headers.authorization || ''
-	const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-	const payload = verifyToken(token)
-	if (!payload?.email) {
-		return res.status(401).json({ error: 'Unauthorized' })
-	}
-	req.email = String(payload.email).toLowerCase()
-	next()
-}
 
 app.get('/v1/me', requireAuth, async (req, res) => {
-	const user = getUser(req.email)
-	if (!user) {
-		return res.status(400).json({
-			error: 'User does not exist',
-			message: 'User does not exist',
-		})
-	}
-	// TODO: Check how these keys are used
-	res.json({
-		user: { email: req.email },
-		balance: user.balance,
-		subscription: {
-			status: user.planId && user.planId !== 'none' ? 'active' : 'none',
-			selling_plan_id: user.planId,
-		},
-		cycle: { end: user.cycleEnd },
-	})
-})
-
-app.get('/v1/credits', requireAuth, async (req, res) => {
-	const user = getUser(req.email)
-	if (!user) {
-		return res.status(400).json({
-			error: 'User does not exist',
-			message: 'User does not exist',
-		})
-	}
-	// TODO: Check how these keys are used
-	res.json({ balance: user.balance, cycle: { end: user.cycleEnd } })
-})
-
-app.post('/v1/enhance', async (req, res) => {
 	try {
-		const prompt = String(req.body?.prompt || '').trim()
+		const user = await getUser(req.email)
+		if (!user) {
+			return res.status(Status.BAD_REQUEST).json({
+				error: 'User does not exist',
+				message: 'User does not exist',
+			})
+		}
+		res.json({
+			user: { email: req.email },
+			balance: user.balance,
+			subscription: {
+				name: user.plan_name,
+				status: user.plan_id !== 'none' ? 'active' : 'none',
+				selling_plan_id: user.plan_id,
+				used: getPercentageUsed(user.plan_name, user.balance),
+			},
+			cycle: { end: user.cycle_end },
+		})
+	} catch (error) {
+		console.error(error)
+		return res
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: 'Internal Server Error' })
+	}
+})
+
+// app.get('/v1/credits', requireAuth, async (req, res) => {
+// 	const user = getUser(req.email)
+// 	if (!user) {
+// 		return res.status(Status.BAD_REQUEST).json({
+// 			error: 'User does not exist',
+// 			message: 'User does not exist',
+// 		})
+// 	}
+
+// 	res.json({ balance: user.balance, cycle: { end: user.cycle_end } })
+// })
+
+app.post('/v1/enhance', requireAuth, async (req, res) => {
+	console.log('Running /enhance')
+	try {
+		const prompt = req.body.prompt?.trim()
 		if (!prompt) {
-			return res.status(400).json({ error: 'Prompt required' })
+			return res
+				.status(Status.BAD_REQUEST)
+				.json({ error: 'Prompt required' })
 		}
 		const response = await fetch(
 			`${process.env.OPENAI_BASE_URL}/chat/completions`,
@@ -406,9 +262,8 @@ app.post('/v1/enhance', async (req, res) => {
 
 		if (!response.ok) {
 			const err = await response.json().catch(() => ({}))
-			return res.status(500).json({
-				error: `OpenAI error: ${response.status}`,
-				detail: err.error?.message || null,
+			return res.status(Status.INTERNAL_SERVER_ERROR).json({
+				error: `OpenAI error: ${err}`,
 			})
 		}
 		const data = await response.json()
@@ -416,55 +271,31 @@ app.post('/v1/enhance', async (req, res) => {
 			.trim()
 			.replace(/^(["'])(.*)\1$/, '$2')
 		if (!enhanced) {
-			return res.status(500).json({ error: 'Empty response from OpenAI' })
+			return res
+				.status(Status.INTERNAL_SERVER_ERROR)
+				.json({ error: 'Empty response from OpenAI' })
 		}
 		return res.json({ success: true, original: prompt, enhanced })
-	} catch (e) {
-		console.error('Enhance error:', e)
+	} catch (error) {
+		console.error('Enhance error:', error)
 		return res
-			.status(500)
-			.json({ error: 'Enhance failed', detail: String(e) })
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: `Enhance failed ${error}` })
 	}
-})
-
-app.post('/v1/jobs', requireAuth, async (req, res) => {
-	const requestedSeconds = Math.max(
-		0,
-		Number(req.body?.requestedSeconds || 0),
-	)
-	const creditsPerSecond = Number(process.env.CREDITS_PER_SECOND)
-	// TODO: Check how fractional second credits are calculated by Runway
-	// Bill to nearest whole second (minimum 1s) to match UX expectation (e.g., 3.10s -> 3s)
-	const billableSeconds = Math.max(1, Math.round(requestedSeconds))
-	const needed = billableSeconds * creditsPerSecond
-	const user = getUser(req.email)
-	const balance = user.balance
-	if (balance < needed) {
-		return res
-			.status(402)
-			.json({ error: 'Insufficient credits', needed, balance })
-	}
-	await updateBalance(req.email, balance - needed)
-	console.log(
-		`🧮 Credit reservation: requestedSeconds=${requestedSeconds}s, billableSeconds=${billableSeconds}s, creditsPerSecond=${creditsPerSecond}, needed=${needed}`,
-	)
-	res.json({ taskId: `task_${Date.now()}`, reservedCredits: needed })
 })
 
 app.post('/v1/portal-link', requireAuth, async (req, res) => {
 	// TODO: Rewrite this to work with Appstle webhooks
 	try {
-		const user = getUser(req.email)
+		const user = await getUser(req.email)
 		if (!user || !user.shopifyCustomerId) {
-			return res.status(400).json({
-				// TODO: Is this message used in the extension?
+			return res.status(Status.BAD_REQUEST).json({
 				error: 'Missing customer ID. Make a first purchase to link your account.',
 			})
 		}
-		// TODO: Verify this url is the same in the env 'https://subscription-admin.appstle.com/api/external/v2'
-		// TODO: Shopify customer id is currently not set
+		// TODO: Shopify customer id is currently not set in the database
 		const resp = await fetch(
-			`${process.env.APSTLE_API_BASE}/manage-subscription-link/${user.shopifyCustomerId}`,
+			`${process.env.APSTLE_API_BASE}/manage-subscription-link/${user.shopifyCustomerId}`.trim(),
 			{
 				headers: { 'X-Apstle-Api-Key': process.env.APSTLE_API_KEY },
 			},
@@ -472,34 +303,111 @@ app.post('/v1/portal-link', requireAuth, async (req, res) => {
 		if (!resp.ok) {
 			const txt = await resp.text().catch(() => '')
 			return res
-				.status(500)
-				.json({ error: 'Failed to fetch portal link', detail: txt })
+				.status(Status.INTERNAL_SERVER_ERROR)
+				.json({ error: 'Failed to fetch portal link' })
 		}
 		const data = await resp.json().catch(() => ({}))
 		return res.json({
 			url: data.url || data.manage_url || data.link || null,
 		})
-	} catch (e) {
+	} catch (error) {
+		console.error(error)
 		return res
-			.status(500)
-			.json({ error: 'Portal link error', detail: String(e) })
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: `Portal link error ${error}` })
 	}
 })
 
-app.post('/v1/checkout/topup', requireAuth, (req, res) => {
-	const pack = String(req.body?.pack || 'credits_1000')
-	const urls = {
-		credits_1000:
-			'https://6134fe-1d.myshopify.com/cart/add?sku=AUTOVFX-TOPUP-1000',
-		credits_2000:
-			'https://6134fe-1d.myshopify.com/cart/add?sku=AUTOVFX-TOPUP-2000',
+app.post('/v1/upload', requireAuth, async (req, res) => {
+	console.log('Running /upload')
+	try {
+		// NOTE: Uses undocumented `/assets` route
+		// https://github.com/runwayml/sdk-node?tab=readme-ov-file#making-customundocumented-requests
+		const response = await runway.post('/assets', { body: req.body })
+		if (!response.ok) {
+			return res
+				.status(Status.INTERNAL_SERVER_ERROR)
+				.json({ error: 'Failed to upload video' })
+		}
+		return res.status(Status.OK)
+	} catch (error) {
+		console.error(error)
+		return res
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: 'Internal Server Error' })
 	}
-	const url = urls[pack] || urls.credits_1000
-	res.json({ url })
+})
+
+app.post('/v1/generate', requireAuth, async (req, res) => {
+	console.log('Running /generate')
+	try {
+		const { videoUri, imageUrl, promptText, seconds } = req.body
+		if (!videoUri || !promptText || !seconds) {
+			return res.status(Status.BAD_REQUEST).json({ error: 'Bad Request' })
+		}
+		const credits = calculateCredits(seconds)
+		const { balance } = await getUser(req.email)
+		console.log({ credits, balance })
+		if (balance - credits < 0) {
+			return res
+				.status(Status.PAYMENT_REQUIRED)
+				.json({ error: 'Not enough credits' })
+		}
+		const options = {
+			model: 'gen4_aleph',
+			ratio: '1280:720',
+			promptText,
+			videoUri,
+		}
+		if (imageUrl) {
+			options.references = [imageUrl]
+		}
+		const task = await runway.videoToVideo.create(options)
+		console.log('Started Runway task', task)
+		return res.json(task)
+	} catch (error) {
+		// TODO: Deal with all possible errors
+		// https://docs.dev.runwayml.com/errors/errors/
+		// TODO: Deal with failure errors in the extension
+		// https://docs.dev.runwayml.com/errors/task-failures/
+		if (error instanceof TaskFailedError) {
+			console.error('The video failed to generate.')
+			console.error(error.taskDetails)
+		} else {
+			console.error(error)
+		}
+		return res
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: 'Internal Server Error' })
+	}
+})
+
+app.post('/v1/status', requireAuth, async (req, res) => {
+	console.log('Running /status')
+	try {
+		const { id, seconds } = req.body
+		console.log({ id, seconds })
+		if (!id || !seconds) {
+			return res.status(Status.BAD_REQUEST).json({ error: 'Bad Request' })
+		}
+		const task = await runway.tasks.retrieve(id)
+		console.log({ task })
+		if (task.status === 'SUCCEEDED') {
+			const credits = await subtractCredits(req.email, seconds)
+			console.log({ credits })
+			return res.json({ ...task, credits })
+		}
+		return res.json(task)
+	} catch (error) {
+		console.error(error)
+		return res
+			.status(Status.INTERNAL_SERVER_ERROR)
+			.json({ error: 'Internal Server Error' })
+	}
 })
 
 if (process.env.RUN_LOCAL === 'true') {
-	const PORT = process.env.PORT || 3000
+	const PORT = 3000
 	app.listen(PORT, () => {
 		console.log(`\n🚀 AutoVFX Webhook Server started!`)
 		console.log(`📍 Local: http://localhost:${PORT}`)
@@ -515,12 +423,19 @@ async function getUser(email) {
 	return result.rows[0]
 }
 
-async function updateBalance(email, balance) {
+async function subtractCredits(email, seconds) {
 	const db = await pool.connect()
-	await db.query(`UPDATE users SET balance = $1 WHERE email = $2`, [
-		balance,
-		email,
-	])
+	const credits = calculateCredits(seconds)
+	// TODO: Make sure balance cannot go below 0
+	const result = await db.query(
+		`UPDATE users SET balance = balance - $1 WHERE email = $2 RETURNING balance`,
+		[credits, email],
+	)
+	const balance = result.rows[0]
+	if (!balance) {
+		throw new Error('Failed to return balance')
+	}
+	return balance
 }
 
 // Graceful shutdown
@@ -528,86 +443,5 @@ process.on('SIGTERM', () => {
 	console.log('\n👋 Shutting down webhook server...')
 	process.exit(0)
 })
-
-function verifyEnvVariables() {
-	const variables = [
-		'DATABASE_URL',
-		'RATE_LIMIT_WINDOW_MS',
-		'RATE_LIMIT_MAX_REQUESTS',
-		'SHOPIFY_WEBHOOK_SECRET',
-		'SELLING_PLAN_TIER1',
-		'SELLING_PLAN_TIER2',
-		'SELLING_PLAN_TIER3',
-		'JWT_SECRET',
-		'JWT_EXPIRES_IN',
-		'OPENAI_API_KEY',
-		'OPENAI_BASE_URL',
-		'OPENAI_MODEL',
-		'CREDITS_PER_SECOND',
-		'APSTLE_API_BASE',
-		'APSTLE_API_KEY',
-	]
-	const missing = variables.filter((variable) => process.env[variable])
-	if (missing.length) {
-		throw new Error(`Missing env variables ${missing.join(', ')}`)
-	}
-}
-
-// --- DEV UTILS: simulate Shopify orders/paid to grant credits ---
-// Enabled only when NODE_ENV !== 'production'
-// POST /v1/dev/mock-orders-paid { email, sellingPlanId?, sku? }
-// if (process.env.NODE_ENV !== 'production')
-// 	app.post('/v1/dev/mock-orders-paid', async (req, res) => {
-// 		const email = String(req.body?.email || '')
-// 			.trim()
-// 			.toLowerCase()
-// 		const sellingPlanId = req.body?.sellingPlanId
-// 			? String(req.body.sellingPlanId)
-// 			: null
-// 		const sku = req.body?.sku ? String(req.body.sku) : null
-// 		if (!email) {
-// 			return res.status(400).json({ error: 'Email required' })
-// 		}
-
-// 		let credits = 0
-// 		if (sellingPlanId) {
-// 			const planCredits = {
-// 				[process.env.SELLING_PLAN_TIER1 || '690384601430']: 3000,
-// 				[process.env.SELLING_PLAN_TIER2 || '690385518934']: 7500,
-// 				[process.env.SELLING_PLAN_TIER3 || '690385551702']: 24000,
-// 			}
-// 			credits = planCredits[sellingPlanId] || 1000
-// 		} else if (sku) {
-// 			credits = getCreditsForSku(sku)
-// 		} else {
-// 			return res.status(400).json({ error: 'Provide sellingPlanId or sku' })
-// 		}
-
-// 		const prev = usersByEmail.get(email) || {
-// 			balance: 0,
-// 			planId: 'none',
-// 			planName: 'none',
-// 			cycleEnd: null,
-// 			shopifyCustomerId: null,
-// 		}
-// 		const cycleEnd = new Date(
-// 			Date.now() + 30 * 24 * 60 * 60 * 1000,
-// 		).toISOString()
-// 		const planId = sellingPlanId || prev.planId || 'none'
-// 		usersByEmail.set(email, {
-// 			balance: (prev.balance || 0) + credits,
-// 			planId,
-// 			planName: planId,
-// 			cycleEnd,
-// 			shopifyCustomerId: prev.shopifyCustomerId,
-// 		})
-// 		await updateUser(email)
-// 		return res.json({
-// 			email,
-// 			granted: credits,
-// 			balance: usersByEmail.get(email).balance,
-// 			cycleEnd,
-// 		})
-// 	})
 
 export default app

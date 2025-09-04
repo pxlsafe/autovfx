@@ -8,8 +8,8 @@
 class AutoVFX {
 	constructor() {
 		this.csInterface = new CSInterface()
-		this.licenseAPI = new LicenseAPI()
-		this.runway = new RunwayAPI()
+		this.license = new LicenseAPI()
+		this.runway = new RunwayAPI(this.license)
 		this.userConfig = { exptofold: 'Desktop', clearExp: false }
 
 		this.currentExportedVideo = null
@@ -229,20 +229,6 @@ class AutoVFX {
 			})
 		}
 
-		const topup1000Btn = document.getElementById('topup1000Btn')
-		if (topup1000Btn) {
-			topup1000Btn.addEventListener('click', () => {
-				this.handleTopupPurchase('1000')
-			})
-		}
-
-		const topup2000Btn = document.getElementById('topup2000Btn')
-		if (topup2000Btn) {
-			topup2000Btn.addEventListener('click', () => {
-				this.handleTopupPurchase('2000')
-			})
-		}
-
 		const upgradeModalBtn = document.getElementById('upgradeModalBtn')
 		if (upgradeModalBtn) {
 			upgradeModalBtn.addEventListener('click', () => {
@@ -276,30 +262,6 @@ class AutoVFX {
 		if (closeAccountModal) {
 			closeAccountModal.addEventListener('click', () => {
 				this.hideAccountModal()
-			})
-		}
-
-		const modalUpgradeBtn = document.getElementById('modalUpgradeBtn')
-		if (modalUpgradeBtn) {
-			modalUpgradeBtn.addEventListener('click', () => {
-				this.hideAccountModal()
-				this.handleUpgrade()
-			})
-		}
-
-		const modalTopupBtn = document.getElementById('modalTopupBtn')
-		if (modalTopupBtn) {
-			modalTopupBtn.addEventListener('click', () => {
-				this.hideAccountModal()
-				this.handleTopupPurchase('1000') // Default to 1000 credits
-			})
-		}
-
-		const modalAccountBtn = document.getElementById('modalAccountBtn')
-		if (modalAccountBtn) {
-			modalAccountBtn.addEventListener('click', () => {
-				this.hideAccountModal()
-				this.handleAccount()
 			})
 		}
 
@@ -374,17 +336,15 @@ class AutoVFX {
 	 */
 	async loadLicenseConfiguration() {
 		// Check if user is already authenticated
-		if (this.licenseAPI.isAuthenticated()) {
+		if (this.license.isAuthenticated()) {
 			try {
-				await this.licenseAPI.getMe()
-				// Ensure freshest balance from backend (reads Postgres when available)
-				await this.licenseAPI.getCredits()
+				// await this.license.getMe()
 				this.showAuthenticatedState()
 			} catch (error) {
 				console.warn(
 					'⚠️  Stored auth invalid, requiring re-authentication',
 				)
-				this.licenseAPI.clearStoredAuth()
+				this.license.clearStoredAuth()
 				this.showAuthView()
 			}
 		} else {
@@ -767,34 +727,19 @@ class AutoVFX {
 
 			// Use backend endpoint with server key
 			try {
-				const resp = await fetch(
-					`https://autovfx.vercel.app/v1/enhance`,
-					{
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({ prompt: currentPrompt }),
-					},
-				)
-				if (!resp.ok) {
-					const txt = await resp.text().catch(() => '')
-					throw new Error(
-						`Server enhance failed: ${resp.status} ${txt}`,
-					)
-				}
-				const data = await resp.json()
-				result = {
-					success: true,
-					original: currentPrompt,
-					enhanced: data.enhanced,
-				}
+				result = await this.license.makeRequest('/enhance', {
+					method: 'POST',
+					body: JSON.stringify({ prompt: currentPrompt }),
+				})
 			} catch (err) {
 				console.error('❌ Server-side enhance error:', err)
 				throw err
 			}
 
 			if (result.success) {
+				if (!result.enhanced) {
+					throw new Error('Missing enhanced prompt')
+				}
 				// Update the prompt input with enhanced version
 				promptInput.value = result.enhanced
 				console.log('✅ Prompt enhanced successfully')
@@ -828,41 +773,6 @@ class AutoVFX {
 		if (!prompt) {
 			this.showError(
 				'Please enter a prompt describing what you want to create.',
-			)
-			return
-		}
-
-		// Get actual video duration for accurate credit calculation
-		let videoDuration = 10 // Default fallback
-		try {
-			if (this.currentExportedVideo) {
-				videoDuration = await this.getVideoDuration(
-					this.currentExportedVideo,
-				)
-				console.log(
-					`📏 Actual video duration: ${videoDuration} seconds`,
-				)
-			}
-		} catch (error) {
-			console.warn(
-				'⚠️ Could not get video duration, using default:',
-				error.message,
-			)
-		}
-
-		// Check credits before proceeding (if licensing is enabled)
-		const hasCredits =
-			await this.checkCreditsBeforeGeneration(videoDuration)
-		if (!hasCredits) {
-			return
-		} // User shown insufficient credits modal
-
-		// Reserve credits for generation (if licensing is enabled)
-		const creditReservation =
-			await this.reserveCreditsForGeneration(videoDuration)
-		if (!creditReservation.success) {
-			this.showError(
-				`Credit reservation failed: ${creditReservation.error}`,
 			)
 			return
 		}
@@ -1501,33 +1411,6 @@ class AutoVFX {
 		}
 	}
 
-	// Safe JSON parse that tolerates stray logs around a JSON payload
-	tryParseJSON(text) {
-		if (text == null) return null
-		if (typeof text !== 'string') {
-			try {
-				text = String(text)
-			} catch (e) {
-				return null
-			}
-		}
-		try {
-			return JSON.parse(text)
-		} catch (e1) {
-			const first = text.indexOf('{')
-			const last = text.lastIndexOf('}')
-			if (first !== -1 && last !== -1 && last > first) {
-				const sub = text.slice(first, last + 1)
-				try {
-					return JSON.parse(sub)
-				} catch (e2) {
-					/* ignore */
-				}
-			}
-			return null
-		}
-	}
-
 	// Extended polling to catch video completion after initial timeout
 	async startExtendedPolling(taskId) {
 		if (!taskId) {
@@ -1747,11 +1630,6 @@ class AutoVFX {
 
 	// Runway API Integration
 	async generateWithRunway(videoPath, prompt, onProgress) {
-		if (!this.runway) {
-			throw new Error(
-				'Runway API not configured. Please set your API key.',
-			)
-		}
 		let sourceVideoPath, fileName
 
 		try {
@@ -1843,22 +1721,20 @@ class AutoVFX {
 			console.log('🎬 Processing video for generation...')
 
 			// Don't set initial progress here - let the callback handle all progress updates
-
-			const result = await this.runway.processVideo(videoFile, prompt, {
-				duration: 2,
-				ratio: '1280:720', // Official Runway API format
-				seed: Math.floor(Math.random() * 4294967295), // Random seed
-				referenceImage: this.referenceImage
-					? this.referenceImage.dataUrl
-					: null,
-				onProgress: (pct, meta) => {
-					if (onProgress) {
-						try {
-							onProgress(pct)
-						} catch (e) {}
-					}
+			const result = await this.runway.processVideo(
+				videoFile,
+				prompt,
+				videoDuration,
+				{
+					onProgress: (pct) => {
+						if (onProgress) {
+							try {
+								onProgress(pct)
+							} catch (e) {}
+						}
+					},
 				},
-			})
+			)
 
 			// Complete the progress bar
 			if (onProgress) {
@@ -1868,202 +1744,31 @@ class AutoVFX {
 			}
 
 			if (result.success) {
-				if (result.videoUrl === 'runway-generation-initiated') {
-					// Special case: generation was initiated but status polling failed
-					console.log('🎬 Runway generation initiated successfully!')
-					console.log(`📋 Task ID: ${result.taskId}`)
-					console.log(`💡 ${result.message}`)
-
-					// Show success message to user
-					this.showError(
-						`✅ Video generation started! Task ID: ${result.taskId}. Processing will continue in the background.`,
-						'success',
-					)
-
-					// Start extended polling in background to catch completion
-					console.log(
-						'🔄 Starting extended polling for video completion...',
-					)
-
-					// Show immediate feedback that generation is in progress
-					console.log(
-						'🎬 Video generation started with Runway API...',
-					)
-
-					// Start extended progress animation for long-running generation
-					this.startSmoothProgress(
-						'generationProgress',
-						30,
-						90,
-						60000,
-					) // 30% to 90% over 60 seconds
-
-					this.startExtendedPolling(result.taskId)
-
-					// Return a placeholder that indicates success
-					return result.videoUrl
-				} else if (result.videoUrl) {
-					return result.videoUrl
-				} else {
-					// Generation succeeded but no video URL - this might be a parsing issue
-					console.log(
-						'⚠️  Generation succeeded but video URL extraction failed',
-					)
-					console.log('📊 Full result:', result)
-
-					if (result.taskId) {
-						this.showError(
-							`✅ Generation completed successfully! Task ID: ${result.taskId}. Please check your account dashboard for the video.`,
-							'success',
-						)
-						return 'runway-generation-completed-no-url'
-					} else {
-						throw new Error(
-							'Generation succeeded but video URL could not be extracted',
-						)
-					}
+				if (!result.videoUrl) {
+					throw new Error(`No video url found.`)
 				}
+				return result.videoUrl
 			} else {
 				throw new Error('Video generation failed')
 			}
 		} catch (error) {
 			console.error('Runway generation error:', error)
-
-			// Handle credit refund for failed generation (if we have a reservation)
-			if (this.currentReservation && this.currentReservation.taskId) {
-				await this.settleCreditsOnCompletion(
-					this.currentReservation.taskId,
-					false,
-					0,
-				)
-			}
-
 			// Show specific error message to user
 			if (error.message.includes('502')) {
-				this.showError(
-					'Video generation servers are busy. Using demo mode instead...',
-				)
+				this.showError('Video generation servers are busy. ')
 			} else {
-				this.showError(
-					`Video generation failed: ${error.message}. Using demo mode...`,
-				)
+				this.showError(`Video generation failed: ${error.message}. `)
 			}
-
-			// Fallback to demo mode if API fails
-			console.log('Falling back to demo mode...')
-			let ffName = sourceVideoPath.split('\\').pop().split('/').pop()
-			let expfileName = `simu_generated_${ffName.replace('autovfx_export_', '').replace('.mp4', '')}.mp4`
-			let newPth = sourceVideoPath.replace(ffName, expfileName)
-
-			console.log(
-				'AutoVFXExtendScript.simuDupli("' +
-					sourceVideoPath +
-					'", "' +
-					newPth +
-					'")',
-			)
-
-			var fileDupli = await new Promise((resolve, reject) => {
-				this.csInterface.evalScript(
-					'AutoVFXExtendScript.simuDupli("' +
-						sourceVideoPath +
-						'", "' +
-						newPth +
-						'")',
-					(result) => {
-						if (
-							result === 'EvalScript error.' ||
-							!result ||
-							result.includes('EvalScript error')
-						) {
-							console.warn('⚠️ simuDupli() failed with' + result)
-							return reject(undefined)
-						} else return resolve(result)
-					},
-				)
-			})
-
-			return fileDupli
 		}
-	}
-
-	async simulateGeneration(fromVideoPath) {
-		let progress = 10
-
-		// Simulate video generation for demo purposes
-		return new Promise((resolve, reject) => {
-			const progressInterval = setInterval(() => {
-				progress += Math.random() * 10
-				if (progress > 90) progress = 90
-				// Drive the button progress during simulation
-				this.updateGenerateButtonProgress(Math.round(progress))
-
-				let message = 'Generating video...'
-				if (progress < 30) message = 'Preparing video...'
-				else if (progress < 60) message = 'Generating with AI...'
-				else message = 'Finalizing generation...'
-
-				console.log(
-					`🎬 API progress: ${Math.round(progress * 100)}% - ${message}`,
-				)
-			}, 1000)
-
-			// Simulate a 10-15 second generation time
-			setTimeout(() => {
-				clearInterval(progressInterval)
-				console.log('🎉 Generation complete!')
-				this.updateGenerateButtonProgress(100)
-
-				// For demo purposes, return the current exported video (simulating processing)
-				resolve(fromVideoPath || 'demo-generation-complete')
-			}, 3000) // Reduced to 3 seconds for faster demo
-		})
 	}
 
 	async uploadVideoToRunway(videoPath) {
-		// This would implement the actual Runway API upload
 		const formData = new FormData()
 		formData.append('file', videoPath)
-
-		const response = await fetch(`${this.runway.baseUrl}/assets`, {
+		return this.license.makeRequest('/upload', {
 			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${this.runway.apiKey}`,
-			},
 			body: formData,
 		})
-
-		if (!response.ok) {
-			throw new Error('Failed to upload video to Runway')
-		}
-
-		return await response.json()
-	}
-
-	async callRunwayGenerate(assetId, prompt) {
-		const response = await fetch(
-			`${this.runway.baseUrl}/gen4turbo/create`,
-			{
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${this.runway.apiKey}`,
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					prompt: prompt,
-					image_url: assetId,
-					duration: 2,
-					ratio: '16:9',
-					watermark: false,
-				}),
-			},
-		)
-
-		if (!response.ok) {
-			throw new Error('Failed to generate video with Runway')
-		}
-
-		return await response.json()
 	}
 
 	async downloadVideo(videoUrl) {
@@ -2909,10 +2614,8 @@ class AutoVFX {
 			// For test mode, just authenticate with email (no password)
 			const credentials = { email }
 
-			await this.licenseAPI.authenticate(credentials)
-			await this.licenseAPI.getMe()
-			// Refresh credits from backend to reflect DB value immediately
-			await this.licenseAPI.getCredits()
+			await this.license.authenticate(credentials)
+			// await this.license.getMe()
 
 			this.showAuthSuccess('Successfully signed in!')
 			setTimeout(() => {
@@ -2949,7 +2652,7 @@ class AutoVFX {
 	 * Show account info popup modal
 	 */
 	toggleAccountDashboard() {
-		if (!this.licenseAPI || !this.licenseAPI.isAuthenticated()) {
+		if (!this.license || !this.license.isAuthenticated()) {
 			// If not authenticated, show auth view
 			this.showAuthView()
 			return
@@ -3035,23 +2738,28 @@ class AutoVFX {
 	/**
 	 * Update account modal content with current user data
 	 */
-	updateAccountModalContent() {
-		if (!this.licenseAPI || !this.licenseAPI.isAuthenticated()) return
+	async updateAccountModalContent() {
+		if (!this.license || !this.license.isAuthenticated()) {
+			return
+		}
+
+		const data = await this.license.getMe()
 
 		// Update user email
 		const emailElement = document.getElementById('modalUserEmail')
-		if (emailElement && this.licenseAPI.currentUser) {
-			emailElement.textContent =
-				this.licenseAPI.currentUser.email || 'Unknown'
+		// if (emailElement && this.license.currentUser) {
+		if (emailElement && data.user.email) {
+			emailElement.textContent = this.license.currentUser.email
 		}
 
 		// Update subscription tier
 		const tierElement = document.getElementById('modalSubscriptionTier')
 		if (tierElement) {
-			const tier =
-				this.licenseAPI.subscription?.tier ||
-				this.licenseAPI.subscription?.status ||
-				'Free'
+			// const tier =
+			// 	this.license.subscription?.tier ||
+			// 	this.license.subscription?.status ||
+			// 	'Free'
+			const tier = data.subscription.name
 			tierElement.textContent = tier
 			tierElement.className = `tier-badge tier-${tier.toLowerCase()}`
 		}
@@ -3059,157 +2767,38 @@ class AutoVFX {
 		// Update credit count
 		const creditElement = document.getElementById('modalCreditCount')
 		if (creditElement) {
-			creditElement.textContent = this.licenseAPI.creditBalance || 0
-		}
-
-		// Update credit duration
-		const durationElement = document.getElementById('modalCreditDuration')
-		if (durationElement && this.licenseAPI.creditBalance) {
-			const minutes = Math.floor(this.licenseAPI.creditBalance / 12)
-			durationElement.textContent = `~${minutes} minutes`
+			// creditElement.textContent = this.license.creditBalance || '?'
+			creditElement.textContent = data.balance
 		}
 
 		// Update usage progress bar
 		const progressElement = document.getElementById('modalUsageProgress')
-		if (progressElement && this.licenseAPI.cycle) {
+		// if (progressElement && this.license.cycle) {
+		if (progressElement && data.subscription.used) {
 			// Calculate usage based on cycle information if available
-			const used = this.licenseAPI.cycle.used || 0
-			const limit =
-				this.licenseAPI.cycle.limit ||
-				this.licenseAPI.creditBalance ||
-				1
-			const percentage = Math.min((used / limit) * 100, 100)
+			const percentage = data.subscription.used
+			// const limit =
+			// 	this.license.cycle.limit || this.license.creditBalance || 1
+			// const percentage = Math.min((used / limit) * 100, 100)
 			progressElement.style.width = `${percentage}%`
 		}
 
 		// Update cycle end info
 		const cycleElement = document.getElementById('modalCycleEnd')
-		if (cycleElement && this.licenseAPI.cycle?.end) {
-			const endDate = new Date(this.licenseAPI.cycle.end)
+		// if (cycleElement && this.license.cycle?.end) {
+		if (cycleElement && data.cycle.end) {
+			const endDate = new Date(data.cycle.end)
 			cycleElement.textContent = `Renews ${endDate.toLocaleDateString()}`
-		} else if (cycleElement && this.licenseAPI.subscription) {
-			// Fallback to subscription status if no cycle info
-			cycleElement.textContent = `Status: ${this.licenseAPI.subscription.status || 'Active'}`
 		}
+		// else if (cycleElement && this.license.subscription) {
+		// 	// Fallback to subscription status if no cycle info
+		// 	cycleElement.textContent = `Status: ${this.license.subscription.status || 'Active'}`
+		// }
 	}
 
 	// updateLicenseHeader method removed - license header replaced with account modal popup
 
 	// ===== LICENSING HANDLERS =====
-
-	/**
-	 * Check if user has enough credits for generation
-	 */
-	async checkCreditsBeforeGeneration(durationSeconds = 10) {
-		const check = this.licenseAPI.canGenerate(durationSeconds)
-
-		if (!check.canGenerate) {
-			this.showInsufficientCreditsModal(check.needed, check.current)
-			return false
-		}
-
-		return true
-	}
-
-	/**
-	 * Reserve credits for generation
-	 */
-	async reserveCreditsForGeneration(durationSeconds = 10) {
-		try {
-			const reservation =
-				await this.licenseAPI.reserveCredits(durationSeconds)
-			this.currentReservation = reservation
-			// License header removed - balance shown in account modal popup
-			return { success: true, reservation }
-		} catch (error) {
-			console.error('❌ Failed to reserve credits:', error)
-
-			if (error.message.includes('INSUFFICIENT_CREDITS')) {
-				const needed =
-					this.licenseAPI.calculateCreditsNeeded(durationSeconds)
-				this.showInsufficientCreditsModal(
-					needed,
-					this.licenseAPI.creditBalance,
-				)
-			}
-
-			return { success: false, error: error.message }
-		}
-	}
-
-	/**
-	 * Handle upgrade subscription
-	 */
-	async handleUpgrade() {
-		try {
-			const portalUrl = await this.licenseAPI.getPortalLink()
-			this.openExternalUrl(portalUrl)
-		} catch (error) {
-			console.error('❌ Failed to get portal link:', error)
-
-			// Provide more helpful error message based on the error
-			if (
-				error.message.includes('400') ||
-				error.message.includes('customer ID')
-			) {
-				alert(
-					'To access the upgrade portal, please complete your first purchase. You can buy credits first using the "Buy Credits" button, then access account management.',
-				)
-			} else {
-				alert(
-					'Failed to open upgrade portal. Please try again later or contact support.',
-				)
-			}
-		}
-	}
-
-	/**
-	 * Handle quick top-up
-	 */
-	async handleTopup() {
-		// Show the insufficient credits modal with top-up options
-		this.showInsufficientCreditsModal(0, this.licenseAPI.creditBalance)
-	}
-
-	/**
-	 * Handle account management
-	 */
-	async handleAccount() {
-		try {
-			const portalUrl = await this.licenseAPI.getPortalLink()
-			this.openExternalUrl(portalUrl)
-		} catch (error) {
-			console.error('❌ Failed to get portal link:', error)
-
-			// Provide more helpful error message based on the error
-			if (
-				error.message.includes('400') ||
-				error.message.includes('customer ID')
-			) {
-				alert(
-					'To access account management, please complete your first purchase. You can buy credits first using the "Buy Credits" button, then manage your account.',
-				)
-			} else {
-				alert(
-					'Failed to open account portal. Please try again later or contact support.',
-				)
-			}
-		}
-	}
-
-	/**
-	 * Handle top-up purchase
-	 */
-	async handleTopupPurchase(pack) {
-		try {
-			const checkoutUrl = await this.licenseAPI.getTopupCheckoutLink(pack)
-			this.openExternalUrl(checkoutUrl)
-			this.hideInsufficientCreditsModal()
-		} catch (error) {
-			console.error('❌ Failed to get checkout link:', error)
-			alert('Failed to open checkout. Please try again.')
-		}
-	}
 
 	/**
 	 * Show insufficient credits modal
@@ -3314,7 +2903,7 @@ class AutoVFX {
 			if (success) {
 				// Generation succeeded - calculate actual credits used and refund difference
 				const actualCreditsUsed =
-					this.licenseAPI.calculateCreditsNeeded(actualSeconds)
+					this.license.calculateCreditsNeeded(actualSeconds)
 				const reservedCredits =
 					this.currentReservation?.reservedCredits ||
 					actualCreditsUsed
@@ -3333,7 +2922,7 @@ class AutoVFX {
 				// For now, we'll just update the local state
 				if (refundCredits > 0) {
 					console.log(`💰 Refunding ${refundCredits} unused credits`)
-					this.licenseAPI.creditBalance += refundCredits
+					this.license.creditBalance += refundCredits
 				}
 
 				this.showError(
@@ -3349,7 +2938,7 @@ class AutoVFX {
 					console.log(
 						`💰 Refunding all ${refundCredits} credits due to failure`,
 					)
-					this.licenseAPI.creditBalance += refundCredits
+					this.license.creditBalance += refundCredits
 				}
 
 				this.showError(

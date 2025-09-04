@@ -3,6 +3,6 @@ node_modules/
 data/
 .DS_Store
 *.log
-.vercel/
-
-
+.vercel
+.env*
+!.env.example

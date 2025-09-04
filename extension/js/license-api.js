@@ -109,11 +109,7 @@ class LicenseAPI {
 				} catch (_) {
 					// ignore parse error
 				}
-				const apiMsg =
-					errorData.message ||
-					errorData.error ||
-					errorData.detail ||
-					''
+				const apiMsg = errorData.message || errorData.error || ''
 				if (response.status === 404) {
 					throw new Error(apiMsg || `Service not found (404)`)
 				}
@@ -173,55 +169,21 @@ class LicenseAPI {
 	 * Get current user info including subscription and credits
 	 */
 	async getMe() {
-		try {
-			const response = await this.makeRequest('/me')
-
-			if (response.user) {
-				this.currentUser = response.user
-				this.subscription = response.subscription
-				this.cycle = response.cycle
-				this.creditBalance = response.balance
-
-				console.log('👤 User info updated:', {
-					email: this.currentUser.email,
-					balance: this.creditBalance,
-					subscription: this.subscription?.status,
-					cycleEnd: this.cycle?.end,
-				})
-			}
-
-			return response
-		} catch (error) {
-			console.error('❌ Failed to get user info:', error)
-			// If backend returns minimal user after first sign-in, proceed without throwing
-			if (this.isAuthenticated()) {
-				return { user: this.currentUser, balance: this.creditBalance }
-			}
-			throw error
-		}
-	}
-
-	/**
-	 * Get current credit balance and cycle info
-	 */
-	async getCredits() {
-		try {
-			const response = await this.makeRequest('/credits')
-
-			this.creditBalance = response.balance
+		const response = await this.makeRequest('/me')
+		if (response.ok) {
+			this.currentUser = response.user
+			this.subscription = response.subscription
 			this.cycle = response.cycle
+			this.creditBalance = response.balance
 
-			console.log('💰 Credits updated:', {
+			console.log('👤 User info updated:', {
+				email: this.currentUser.email,
 				balance: this.creditBalance,
-				cycleStart: this.cycle?.start,
+				subscription: this.subscription?.status,
 				cycleEnd: this.cycle?.end,
 			})
-
-			return response
-		} catch (error) {
-			console.error('❌ Failed to get credits:', error)
-			throw error
 		}
+		return response
 	}
 
 	/**
@@ -242,52 +204,6 @@ class LicenseAPI {
 			needed: needed,
 			current: this.creditBalance,
 			deficit: Math.max(0, needed - this.creditBalance),
-		}
-	}
-
-	/**
-	 * Reserve credits for video generation
-	 */
-	async reserveCredits(requestedSeconds) {
-		try {
-			const response = await this.makeRequest('/jobs', {
-				method: 'POST',
-				body: JSON.stringify({ requestedSeconds }),
-			})
-
-			console.log('🎟️  Credits reserved:', {
-				taskId: response.taskId,
-				reservedCredits: response.reservedCredits,
-			})
-
-			// Update local balance
-			this.creditBalance -= response.reservedCredits
-
-			return response
-		} catch (error) {
-			console.error('❌ Failed to reserve credits:', error)
-			throw error
-		}
-	}
-
-	/**
-	 * Get job/task status
-	 */
-	async getJobStatus(taskId) {
-		try {
-			const response = await this.makeRequest(`/jobs/${taskId}`)
-
-			console.log('📊 Job status:', {
-				taskId: taskId,
-				status: response.status,
-				usedCredits: response.usedCredits,
-				refundCredits: response.refundCredits,
-			})
-
-			return response
-		} catch (error) {
-			console.error('❌ Failed to get job status:', error)
-			throw error
 		}
 	}
 

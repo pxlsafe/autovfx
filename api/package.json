@@ -8,8 +8,13 @@
 		"dev": "RUN_LOCAL=true node index.js"
 	},
 	"dependencies": {
+		"@runwayml/sdk": "^2.8.2",
 		"@vercel/functions": "^3.0.0",
 		"express": "^5.1.0",
+		"http-status-codes": "^2.3.0",
 		"pg": "^8.16.3"
+	},
+	"devDependencies": {
+		"vercel": "^47.0.4"
 	}
 }

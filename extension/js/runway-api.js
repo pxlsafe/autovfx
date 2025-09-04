@@ -1,34 +1,18 @@
+// @ts-check
+
 /**
  * Runway API Integration
  * Handles communication with Runway ML API for video generation
  */
 
 class RunwayAPI {
-	constructor() {
-		this.apiKey =
-			'key_a33ec5121fccdca78789ef930fb9483c43656f2cd525b4199cd763e7f6456214a1530801bed32dff7a5c08e9147d06945abaf9136c40696cb6089dfa0ea9624a'
-		this.baseUrl = 'https://api.dev.runwayml.com/v1'
-		this.model = 'gen4_aleph'
-		this.apiVersion = '2024-11-06'
-		this.defaultDuration = 2
-		this.defaultRatio = '1280:720'
-		this.watermark = false
-
-		// Request throttling to prevent 400 errors from concurrent requests
+	constructor(license) {
 		this.activeRequests = new Set()
 		this.maxConcurrentRequests = 3
 		this.requestQueue = []
 		this.lastRequestTime = 0
-		this.minRequestInterval = 1000 // 1 second between requests
-
-		console.log('🚀 RunwayAPI initialized:', {
-			baseUrl: this.baseUrl,
-			model: this.model,
-			apiVersion: this.apiVersion,
-			hasApiKey: !!this.apiKey,
-			maxConcurrentRequests: this.maxConcurrentRequests,
-			minRequestInterval: this.minRequestInterval,
-		})
+		this.minRequestInterval = 1000
+		this.license = license
 	}
 
 	/**
@@ -319,22 +303,8 @@ class RunwayAPI {
 	 * Generate video using Runway Gen-4 Turbo
 	 */
 	async generateVideo(options = {}) {
-		if (!this.apiKey) {
-			throw new Error(
-				'API key not set. Please configure your Runway API key.',
-			)
-		}
-
-		const {
-			prompt,
-			videoUri,
-			imageUrl,
-			duration = this.defaultDuration,
-			ratio = this.defaultRatio,
-			seed,
-			watermark = this.watermark,
-			onProgress,
-		} = options
+		const { prompt, videoUri, imageUrl, videoDuration, onProgress } =
+			options
 
 		if (!prompt) {
 			throw new Error('Prompt is required for video generation')
@@ -345,275 +315,61 @@ class RunwayAPI {
 
 		const requestBody = {
 			promptText: prompt,
-			model: this.model,
-			ratio: ratio,
-			contentModeration: {
-				publicFigureThreshold: 'auto',
-			},
-		}
-
-		// Add video URI if provided (for video-to-video)
-		if (videoUri) {
-			requestBody.videoUri = videoUri
-		}
-
-		// Add seed if provided
-		if (seed !== undefined) {
-			requestBody.seed = seed
-		}
-
-		// Add references if image provided
-		if (imageUrl) {
-			requestBody.references = [
-				{
-					type: 'image',
-					uri: imageUrl,
-				},
-			]
+			videoDuration,
+			videoUri,
+			imageUrl,
+			seconds: videoDuration,
 		}
 
 		console.log('🎬 Sending video generation request:', {
-			model: this.model,
 			prompt: prompt.substring(0, 50) + '...',
+			seconds: videoDuration,
 			hasVideoUri: !!videoUri,
 			hasImageUrl: !!imageUrl,
 			hasReferenceImage: !!imageUrl,
-			ratio: ratio,
 		})
 
 		// Use request throttling to prevent 400 errors from concurrent requests
 		const requestId = `generate-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
-		const response = await this.throttleRequest(requestId, async () => {
-			return await fetch(`${this.baseUrl}/video_to_video`, {
+		const result = await this.throttleRequest(requestId, async () => {
+			return await this.license.makeRequest('/generate', {
 				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${this.apiKey}`,
-					'Content-Type': 'application/json',
-					'X-Runway-Version': this.apiVersion,
-				},
 				body: JSON.stringify(requestBody),
 			})
 		})
 
-		if (!response.ok) {
-			const errorData = await response.json().catch(() => ({}))
+		// if (!response.ok) {
+		// 	const errorData = await response.json().catch(() => ({}))
 
-			// Enhanced debugging for 400 errors
-			if (response.status === 400) {
-				console.log('🚨 400 Error Debug Info:')
-				console.log('Request URL:', `${this.baseUrl}/video_to_video`)
-				console.log('Request Headers:', {
-					Authorization: this.apiKey
-						? `Bearer ${this.apiKey.substring(0, 8)}...`
-						: 'MISSING',
-					'Content-Type': 'application/json',
-					'X-Runway-Version': this.apiVersion,
-				})
-				console.log(
-					'Request Body Size:',
-					JSON.stringify(requestBody).length,
-					'bytes',
-				)
-				console.log('Response Status:', response.status)
-				console.log('Response Data:', errorData)
+		// 	// Enhanced debugging for 400 errors
+		// 	if (response.status === 400) {
+		// 		console.log('🚨 400 Error Debug Info:')
+		// 		console.log(
+		// 			'Request Body Size:',
+		// 			JSON.stringify(requestBody).length,
+		// 			'bytes',
+		// 		)
+		// 		console.log('Response Status:', response.status)
+		// 		console.log('Response Data:', errorData)
+		// 	}
+		// }
 
-				// Analyze the specific 400 error based on Runway documentation
-				const errorMessage = errorData.message || errorData.error || ''
-				const errorField = errorData.field || ''
-
-				console.log('🔍 Error Analysis:')
-				console.log('Field with error:', errorField)
-				console.log('Error message:', errorMessage)
-
-				// Check for asset-related errors
-				if (
-					errorMessage.includes('Invalid data URI') ||
-					errorMessage.includes('data URI')
-				) {
-					console.log(
-						'❌ Data URI Error - The video data URI is malformed',
-					)
-					console.log('💡 This could be due to:')
-					console.log('  - Corrupted video file')
-					console.log('  - Unsupported video format')
-					console.log('  - File too large for base64 encoding')
-				}
-
-				if (errorMessage.includes('Unsupported asset type')) {
-					console.log(
-						'❌ Asset Type Error - Video format not supported',
-					)
-					console.log('💡 Supported formats: MP4, MOV, AVI, WebM')
-				}
-
-				if (errorMessage.includes('Asset size exceeds')) {
-					console.log('❌ Size Error - Video file too large')
-					console.log('💡 Maximum size: 16MB')
-				}
-
-				if (errorMessage.includes('Invalid asset dimensions')) {
-					console.log(
-						'❌ Dimension Error - Video resolution too high',
-					)
-					console.log('💡 Maximum: 8000px on either side')
-				}
-
-				if (errorMessage.includes('Invalid asset aspect ratio')) {
-					console.log(
-						'❌ Aspect Ratio Error - Video aspect ratio out of bounds',
-					)
-				}
-
-				if (errorMessage.includes('Failed to fetch asset')) {
-					console.log('❌ Fetch Error - Could not download the asset')
-					console.log(
-						"💡 This suggests a server/network issue on Runway's side",
-					)
-				}
-
-				if (errorMessage.includes('Timeout while fetching')) {
-					console.log(
-						'❌ Timeout Error - Asset download took too long',
-					)
-					console.log(
-						'💡 File may be too large or network connection slow',
-					)
-				}
-
-				// Check for platform-specific issues
-				const userAgent = navigator.userAgent
-				const isWindows = userAgent.indexOf('Windows') !== -1
-				if (isWindows) {
-					console.log(
-						'🪟 Windows detected - checking for platform-specific issues',
-					)
-					console.log('User Agent:', userAgent)
-				}
-
-				// Log request timing for rate limiting analysis
-				console.log('⏱️ Request timestamp:', new Date().toISOString())
-			}
-
-			// Enhanced error handling for content moderation
-			if (
-				errorData.error &&
-				errorData.error.includes('content moderation')
-			) {
-				const contentModerationError = `
-🚨 CONTENT MODERATION ERROR:
-Your prompt was flagged by Runway's content moderation system.
-
-Common reasons:
-• Violence, weapons, or aggressive content
-• Explicit or sexual content  
-• Drug-related content
-• Hate speech or offensive language
-• References to real people/celebrities
-• Personal information
-
-💡 Try a more neutral prompt focusing on:
-• Artistic effects (colors, lighting, atmosphere)
-• Movement and motion (flowing, swirling, gentle)
-• Abstract concepts (dreamy, surreal, cinematic)
-• Safe transformations (weather changes, time-lapse effects)
-
-Your prompt: "${prompt}"
-`
-				throw new Error(contentModerationError)
-			}
-
-			// Create more specific error messages based on the 400 error type
-			let specificErrorMessage = `API request failed: ${response.status}`
-			if (errorData.message) {
-				specificErrorMessage += ` - ${errorData.message}`
-			}
-			if (errorData.field) {
-				specificErrorMessage += ` (Field: ${errorData.field})`
-			}
-
-			throw new Error(specificErrorMessage)
-		}
-
-		const result = await response.json()
+		// const result = await response.json()
 
 		// Start polling for completion
 		console.log('📡 Polling for generation completion...')
-		return this.pollForCompletion(
-			result.id,
-			undefined,
-			undefined,
-			onProgress,
-		)
+		return this.pollForCompletion(result.id, videoDuration, onProgress)
 	}
 
 	/**
 	 * Check generation status
 	 */
-	async checkGenerationStatus(taskId) {
-		if (!this.apiKey) {
-			throw new Error(
-				'API key not set. Please configure your Runway API key.',
-			)
-		}
-
-		// Try different possible endpoints for official Runway API
-		const endpoints = [
-			`${this.baseUrl}/tasks/${taskId}`,
-			`${this.baseUrl}/generations/${taskId}`,
-			`${this.baseUrl}/video_to_video/${taskId}`,
-			`${this.baseUrl}/jobs/${taskId}`,
-		]
-
-		for (const endpoint of endpoints) {
-			try {
-				console.log(`Trying status endpoint: ${endpoint}`)
-				const response = await fetch(endpoint, {
-					method: 'GET',
-					headers: {
-						Authorization: `Bearer ${this.apiKey}`,
-						'X-Runway-Version': this.apiVersion,
-					},
-				})
-
-				if (response.ok) {
-					console.log(`✅ Found working status endpoint: ${endpoint}`)
-					return await response.json()
-				} else if (response.status === 404) {
-					console.log(`❌ Endpoint not found: ${endpoint}`)
-					continue // Try next endpoint
-				} else {
-					const errorData = await response.json().catch(() => ({}))
-					console.log(
-						`⚠️  Status check failed at ${endpoint}: ${response.status} - ${errorData.message || response.statusText}`,
-					)
-				}
-			} catch (error) {
-				console.log(`❌ Network error at ${endpoint}: ${error.message}`)
-			}
-		}
-
-		// If all endpoints fail, throw error with helpful message
-		throw new Error(
-			`Official Runway API status endpoints not found. Task ID: ${taskId}. This might indicate the API structure has changed.`,
-		)
-	}
-
-	/**
-	 * Get available models
-	 */
-	async getModels() {
-		if (!this.apiKey) {
-			throw new Error(
-				'API key not set. Please configure your Runway API key.',
-			)
-		}
-
-		// For official Runway API, return available models
-		return {
-			success: true,
-			models: [{ id: 'gen4_aleph', name: 'Runway Gen-4 Aleph' }],
-		}
+	async checkGenerationStatus(id, seconds) {
+		return await this.license.makeRequest('/status', {
+			method: 'POST',
+			body: JSON.stringify({ id, seconds }),
+		})
 	}
 
 	/**
@@ -679,7 +435,7 @@ Your prompt: "${prompt}"
 	/**
 	 * Complete workflow: upload video and generate new video
 	 */
-	async processVideo(videoFile, prompt, options = {}) {
+	async processVideo(videoFile, prompt, videoDuration, options = {}) {
 		try {
 			// Step 0: Initial file validation
 			console.log('🔍 Starting comprehensive asset validation...')
@@ -711,6 +467,7 @@ Your prompt: "${prompt}"
 			// Step 3: Generate video with retry mechanism
 			console.log('Starting video generation with Runway API...')
 			const generateOptions = {
+				videoDuration,
 				prompt: prompt,
 				videoUri: videoDataUri, // Use data URI directly
 				imageUrl: options.referenceImage || null, // Add reference image if provided
@@ -732,8 +489,6 @@ Your prompt: "${prompt}"
 				try {
 					return await this.pollForCompletion(
 						taskId,
-						undefined,
-						undefined,
 						options.onProgress,
 					)
 				} catch (pollingError) {
@@ -753,7 +508,7 @@ Your prompt: "${prompt}"
 						videoUrl: 'runway-generation-initiated',
 						status: 'initiated',
 						taskId: taskId,
-						message: `Video generation successfully started with task ID: ${taskId}. Check Runway dashboard for results.`,
+						message: `Video generation successfully started with task ID: ${taskId}.`,
 						pollingNote:
 							'Status polling failed - this is normal with the official Runway API structure',
 					}
@@ -778,14 +533,11 @@ Your prompt: "${prompt}"
 	/**
 	 * Poll for generation completion
 	 */
-	async pollForCompletion(
-		taskId,
-		maxAttempts = 60,
-		interval = 15000,
-		onProgress,
-	) {
+	async pollForCompletion(taskId, videoDuration, onProgress) {
 		let attempts = 0
 		let consecutiveErrors = 0
+		let maxAttempts = 60
+		let interval = 15000
 
 		console.log(`🔄 Starting to poll for task: ${taskId}`)
 		console.log(
@@ -799,7 +551,10 @@ Your prompt: "${prompt}"
 				console.log(
 					`📡 Polling attempt ${attempts + 1}/${maxAttempts}...`,
 				)
-				const status = await this.checkGenerationStatus(taskId)
+				const status = await this.checkGenerationStatus(
+					taskId,
+					videoDuration,
+				)
 
 				console.log(`Status response:`, status)
 
@@ -807,130 +562,32 @@ Your prompt: "${prompt}"
 				consecutiveErrors = 0
 
 				// Handle different possible status formats from official Runway API
-				const taskStatus =
-					status.status ||
-					status.state ||
-					status.job_status ||
-					'unknown'
+				const taskStatus = status.status
 				console.log(`Generation status: ${taskStatus}`)
 
-				// Try to extract an accurate progress percentage if the API provides one
-				let pct = null
-				const candidates = [
-					status.progress,
-					status.progress_percentage,
-					status.progressPercent,
-					status.percentage,
-					status.percent_complete,
-					status.metrics && status.metrics.progress,
-					status.output &&
-						Array.isArray(status.output) &&
-						status.output[0] &&
-						status.output[0].progress,
-				]
-				for (const c of candidates) {
-					if (typeof c === 'number' && !isNaN(c)) {
-						pct = c <= 1 ? c * 100 : c
-						break
-					}
-					if (typeof c === 'string') {
-						const parsed = parseFloat(c)
-						if (!isNaN(parsed)) {
-							pct = parsed <= 1 ? parsed * 100 : parsed
-							break
+				if (status.progress) {
+					const pct = status.progress * 100
+					if (onProgress && typeof onProgress === 'function') {
+						try {
+							onProgress(clamp(Math.round(pct), 0, 99), {
+								status,
+							})
+						} catch (e) {
+							/* ignore */
 						}
 					}
 				}
 
-				// Fallback heuristic if no explicit progress returned
-				if (pct == null) {
-					// Queue-based hints
-					const qp = status.queue_position ?? status.queuePosition
-					const qt = status.queue_total ?? status.queueTotal
-					if (
-						typeof qp === 'number' &&
-						typeof qt === 'number' &&
-						qt > 0
-					) {
-						// 5% to 30% while in queue
-						pct = 5 + (1 - clamp(qp / qt, 0, 1)) * 25
-					} else if (
-						taskStatus === 'IN_PROGRESS' ||
-						taskStatus === 'RUNNING' ||
-						taskStatus === 'processing'
-					) {
-						// 30%..90% over attempts while processing
-						pct =
-							30 +
-							clamp(attempts / Math.max(1, maxAttempts), 0, 1) *
-								60
-					} else if (
-						taskStatus === 'queued' ||
-						taskStatus === 'PENDING'
-					) {
-						pct =
-							5 +
-							clamp(attempts / Math.max(1, maxAttempts), 0, 1) *
-								20
-					} else {
-						// Default gentle ramp 10..85
-						pct =
-							10 +
-							clamp(attempts / Math.max(1, maxAttempts), 0, 1) *
-								75
-					}
-				}
-				if (onProgress && typeof onProgress === 'function') {
-					try {
-						onProgress(clamp(Math.round(pct), 0, 99), { status })
-					} catch (e) {
-						/* ignore */
-					}
-				}
-
-				if (
-					taskStatus === 'completed' ||
-					taskStatus === 'success' ||
-					taskStatus === 'COMPLETED' ||
-					taskStatus === 'SUCCEEDED'
-				) {
+				// RUNNING SUCCEEDED FAILED PENDING CANCELLED THROTTLED
+				if (taskStatus === 'SUCCEEDED') {
 					console.log('🎉 Generation completed successfully!')
 
-					// Extract video URL from official Runway API response format
 					let videoUrl = null
 
-					if (
-						status.output &&
-						Array.isArray(status.output) &&
-						status.output.length > 0
-					) {
-						// Official Runway API format: output: [{ url: "..." }] or output: ["url"]
-						const output = status.output[0]
-						if (typeof output === 'string') {
-							videoUrl = output
-						} else if (output && typeof output === 'object') {
-							videoUrl =
-								output.url ||
-								output.videoUrl ||
-								output.video_url ||
-								output.downloadUrl
-						}
+					if (status.output?.length) {
+						videoUrl = status.output[0]
 						console.log(
 							'📹 Extracted video URL from output array:',
-							videoUrl,
-						)
-					}
-
-					// Fallback to other possible fields
-					if (!videoUrl) {
-						videoUrl =
-							status.videoUrl ||
-							status.output_url ||
-							status.result_url ||
-							status.video_url ||
-							status.result?.video_url
-						console.log(
-							'📹 Using fallback video URL extraction:',
 							videoUrl,
 						)
 					}
@@ -947,22 +604,18 @@ Your prompt: "${prompt}"
 					}
 				}
 
-				if (
-					taskStatus === 'failed' ||
-					taskStatus === 'error' ||
-					taskStatus === 'FAILED' ||
-					taskStatus === 'ERROR'
-				) {
+				// RUNNING SUCCEEDED FAILED PENDING CANCELLED THROTTLED
+				if (taskStatus === 'FAILED' || taskStatus === 'CANCELLED') {
 					throw new Error(
-						`Generation failed: ${status.error || status.message || 'Unknown error'}`,
+						`Generation failed: ${status.failure || 'Unknown error'}`,
 					)
 				}
 
 				// If in progress, continue polling
 				if (
-					taskStatus === 'IN_PROGRESS' ||
+					taskStatus === 'PENDING' ||
 					taskStatus === 'RUNNING' ||
-					taskStatus === 'processing'
+					taskStatus === 'THROTTLED'
 				) {
 					console.log(`⏳ Generation in progress...`)
 				}
@@ -1020,84 +673,6 @@ Your prompt: "${prompt}"
 		throw new Error(
 			`Generation polling timed out after ${(maxAttempts * interval) / 1000 / 60} minutes`,
 		)
-	}
-
-	/**
-	 * Download video from URL
-	 */
-	async downloadVideo(videoUrl, filename) {
-		try {
-			const response = await fetch(videoUrl)
-
-			if (!response.ok) {
-				throw new Error(`Download failed: ${response.statusText}`)
-			}
-
-			const blob = await response.blob()
-
-			// Create download link
-			const url = window.URL.createObjectURL(blob)
-			const a = document.createElement('a')
-			a.style.display = 'none'
-			a.href = url
-			a.download = filename || `autovfx_generated_${Date.now()}.mp4`
-
-			document.body.appendChild(a)
-			a.click()
-
-			// Cleanup
-			window.URL.revokeObjectURL(url)
-			document.body.removeChild(a)
-
-			return { success: true, filename: a.download }
-		} catch (error) {
-			console.error('Download failed:', error)
-			throw error
-		}
-	}
-
-	/**
-	 * Validate API configuration
-	 */
-	validateConfig() {
-		const errors = []
-
-		if (!this.apiKey) {
-			errors.push('API key is required')
-		}
-
-		if (!this.baseUrl) {
-			errors.push('Base URL is required')
-		}
-
-		return {
-			valid: errors.length === 0,
-			errors: errors,
-		}
-	}
-
-	/**
-	 * Test API connection
-	 */
-	async testConnection() {
-		try {
-			const validation = this.validateConfig()
-			if (!validation.valid) {
-				throw new Error(
-					`Configuration errors: ${validation.errors.join(', ')}`,
-				)
-			}
-
-			// Try to get models as a connection test
-			await this.getModels()
-
-			return { success: true, message: 'API connection successful' }
-		} catch (error) {
-			return {
-				success: false,
-				message: `API connection failed: ${error.message}`,
-			}
-		}
 	}
 }
 
