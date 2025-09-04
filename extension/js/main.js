@@ -319,10 +319,7 @@ class AutoVFX {
 			this.removeAllGen()
 		}
 
-		console.log('Configuration loaded:', {
-			hasRunwayKey: !!this.runway.apiKey,
-			userConfig: this.userConfig,
-		})
+		console.log('Configuration loaded:', this.userConfig)
 	}
 
 	removeAllGen() {
@@ -529,7 +526,7 @@ class AutoVFX {
 							}
 							console.warn(
 								'⚠️ getTimelineInfo returned unexpected result:',
-								String(reresults),
+								String(result),
 							)
 							return reject(
 								new Error(
