@@ -276,6 +276,7 @@ router.post('/status', requireAuth, async (req, res) => {
 		const task = await runway.tasks.retrieve(id)
 		console.log({ task })
 		if (task.status === 'SUCCEEDED') {
+			// TODO: `subtractCredits` returns an object
 			const credits = await subtractCredits(email, seconds)
 			console.log(
 				`New balance ${credits} for ${redact(email)} after task ${id}`,
