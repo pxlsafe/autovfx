@@ -22,7 +22,7 @@ const app = express()
 const runway = new RunwayML()
 const pool = new Pool({
 	connectionString: process.env.DATABASE_URL,
-	connectionTimeoutMillis: 5000,
+	connectionTimeoutMillis: 10000,
 })
 
 attachDatabasePool(pool)
