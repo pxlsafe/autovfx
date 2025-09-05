@@ -9,6 +9,7 @@ import RunwayML, { TaskFailedError } from '@runwayml/sdk'
 import {
 	calculateCredits,
 	getPercentageUsed,
+	redact,
 	requireAuth,
 	signToken,
 	verifyEnvVariables,
@@ -151,6 +152,7 @@ app.post('/v1/auth', async (req, res) => {
 
 		const user = await getUser(email)
 		if (!user) {
+			console.warn(`User ${redact(email)} does not exist`)
 			return res.status(Status.BAD_REQUEST).json({
 				error: 'User does not exist',
 				message: 'User does not exist',
@@ -345,10 +347,14 @@ app.post('/v1/generate', requireAuth, async (req, res) => {
 		if (!videoUri || !promptText || !seconds) {
 			return res.status(Status.BAD_REQUEST).json({ error: 'Bad Request' })
 		}
+		const email = req.email
 		const credits = calculateCredits(seconds)
-		const { balance } = await getUser(req.email)
-		console.log({ credits, balance })
+		const { balance } = await getUser(email)
+		console.log({ email: redact(email), credits, balance })
 		if (balance - credits < 0) {
+			console.log(
+				`Not enough credits for ${redact(email)}. Required ${credits}, but balance is ${balance}`,
+			)
 			return res
 				.status(Status.PAYMENT_REQUIRED)
 				.json({ error: 'Not enough credits' })
@@ -386,6 +392,7 @@ app.post('/v1/status', requireAuth, async (req, res) => {
 	console.log('Running /status')
 	try {
 		const { id, seconds } = req.body
+		const email = req.email
 		console.log({ id, seconds })
 		if (!id || !seconds) {
 			return res.status(Status.BAD_REQUEST).json({ error: 'Bad Request' })
@@ -393,8 +400,10 @@ app.post('/v1/status', requireAuth, async (req, res) => {
 		const task = await runway.tasks.retrieve(id)
 		console.log({ task })
 		if (task.status === 'SUCCEEDED') {
-			const credits = await subtractCredits(req.email, seconds)
-			console.log({ credits })
+			const credits = await subtractCredits(email, seconds)
+			console.log(
+				`New balance ${credits} for ${redact(email)} after task ${id}`,
+			)
 			return res.json({ ...task, credits })
 		}
 		return res.json(task)

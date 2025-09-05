@@ -120,3 +120,15 @@ export function getPercentageUsed(tierName, balance) {
 	}
 	return 100 - (balance / credits) * 100
 }
+
+export function redact(email) {
+	try {
+		const [name, domain] = email.split('@')
+		const [base, extension] = domain.split('.')
+		const truncatedName = `${name.slice(0, 3)}...`
+		const truncatedDomain = `${base.slice(0, 3)}...${extension}`
+		return [truncatedName, truncatedDomain].join('@')
+	} catch {
+		return '[unknown]'
+	}
+}
