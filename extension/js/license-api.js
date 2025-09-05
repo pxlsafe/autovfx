@@ -82,7 +82,7 @@ class LicenseAPI {
 	 * Make authenticated API request
 	 */
 	async makeRequest(endpoint, options = {}) {
-		const url = `https://autovfx.vercel.app/v1${endpoint}`
+		const url = `https://autovfx.vercel.app/v2${endpoint}`
 		const config = {
 			headers: {
 				'Content-Type': 'application/json',
